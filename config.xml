@@ -14,7 +14,6 @@
     
     <platform name="android">
         <preference name="AndroidXEnabled" value="true" />
-        <!-- A MUDANCA ESTA AQUI: false mostra as barras -->
         <preference name="Fullscreen" value="false" />
         <preference name="Orientation" value="portrait" />
     </platform>
