@@ -109,7 +109,7 @@
         const { useState, useEffect, useMemo, useRef } = React;
 
         // VERSÃO ATUAL DO SEU APP
-        const APP_VERSION = "1.9"; 
+        const APP_VERSION = "2.1"; 
 
         const firebaseConfig = {
             apiKey: "AIzaSyDcWSyP6S7LDuGQ1ZjFqKAHCZ8mjwJhEKY",
@@ -154,37 +154,28 @@
             return (match && match[2].length === 11) ? match[2] : null;
         };
 
-        // Helper Notification
+        // Helper Notification Safe Wrapper
         const sendNotification = (title, body, icon) => {
-            if (typeof Notification === "undefined") return;
-            if (Notification.permission === "granted") {
-                try {
+            try {
+                if (typeof Notification !== "undefined" && Notification.permission === "granted") {
                     new Notification(title, { body, icon, tag: 'nexus-update' });
-                } catch (e) { console.error("Erro ao enviar notificação", e); }
-            }
+                }
+            } catch (e) { console.log("Notificação não suportada neste ambiente"); }
         };
 
         const requestNotificationPermission = async () => {
-            if (typeof Notification === "undefined") {
-                alert("Este navegador/app não suporta notificações web.");
-                return 'denied';
-            }
-            
-            if (Notification.permission === 'denied') {
-                alert("As notificações estão bloqueadas nas configurações do seu navegador ou Android. Por favor, ative manualmente nas configurações de Apps.");
-                return 'denied';
-            }
-
             try {
+                if (typeof Notification === "undefined") {
+                    alert("Seu dispositivo não suporta notificações web.");
+                    return 'denied';
+                }
                 const permission = await Notification.requestPermission();
                 if (permission === "granted") {
                     sendNotification("Notificações Ativadas", "Você será avisado sobre novos apps!", "https://cdn-icons-png.flaticon.com/512/5726/5726678.png");
-                } else if (permission === 'denied') {
-                    alert("Você negou as notificações.");
                 }
                 return permission;
             } catch (e) {
-                console.error("Erro ao solicitar permissão:", e);
+                console.error("Erro permissão:", e);
                 return 'denied';
             }
         };
@@ -461,9 +452,16 @@
         // --- Modais ---
         function NotificationsModal({ onClose, themeMode, apps }) {
             const colors = THEMES[themeMode] || THEMES.amoled;
-            const [permission, setPermission] = useState(() => {
-                return (typeof Notification !== 'undefined') ? Notification.permission : 'denied';
-            });
+            const [permission, setPermission] = useState('default');
+
+            // Check permission safely on mount
+            useEffect(() => {
+                if (typeof Notification !== 'undefined') {
+                    setPermission(Notification.permission);
+                } else {
+                    setPermission('denied');
+                }
+            }, []);
 
             const request = async () => {
                 const p = await requestNotificationPermission();
@@ -473,8 +471,8 @@
             const recentApps = [...apps].sort((a,b) => (b.scheduledAt || b.uploadDate || 0) - (a.scheduledAt || a.uploadDate || 0)).slice(0, 8);
 
             return (
-                <div className={`fixed inset-0 z-[9999] ${colors.bg} animate-slide-up flex flex-col overflow-y-auto min-h-screen`}>
-                     <header className={`p-4 flex items-center justify-between border-b ${colors.border} sticky top-0 ${colors.bg} z-10`}>
+                <div className={`fixed inset-0 z-[9999] ${colors.bg} animate-slide-up flex flex-col overflow-y-auto min-h-screen`} style={{backgroundColor: themeMode === 'light' ? '#f2f2f7' : '#000000'}}>
+                     <header className={`p-4 flex items-center justify-between border-b ${colors.border} sticky top-0 ${colors.glass} backdrop-blur-xl z-10`}>
                         <h2 className={`text-xl font-bold ${colors.text}`}>Notificações</h2>
                         <button onClick={onClose}><Icon name="X" className={colors.text} /></button>
                      </header>
