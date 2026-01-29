@@ -132,6 +132,12 @@
         
         const DB_APP_ID = 'nexus-hub-permanent-vault';
 
+        // --- Helper de Download Universal ---
+        const openSystemLink = (url) => {
+            if (!url) return alert("Link indisponível.");
+            window.open(url, '_system');
+        };
+
         // --- Theme System ---
         const THEMES = {
             amoled: { bg: 'bg-black', text: 'text-white', card: 'bg-[#1c1c1e]', border: 'border-white/10', subtext: 'text-zinc-500', glass: 'bg-black/80', input: 'bg-zinc-900', dock: 'bg-[#121212]/80' },
@@ -162,26 +168,22 @@
 
         // --- Notification Logic (Hybrid System) ---
         const sendNotification = (title, body, icon) => {
-            // 1. Tenta Notificação Nativa
             try {
                 if (typeof Notification !== "undefined" && Notification.permission === "granted") {
                     new Notification(title, { body, icon, tag: 'nexus-update' });
-                    return; // Sucesso nativo, sai.
+                    return;
                 }
             } catch (e) { console.log("Notificação nativa indisponível"); }
 
-            // 2. Fallback: Notificação In-App (Dispara evento para o React)
             const event = new CustomEvent('nexus-toast', { detail: { title, body, icon } });
             window.dispatchEvent(event);
         };
 
         const requestNotificationPermission = async () => {
-            // Se não tem suporte nativo (APK/WebView), simulamos sucesso para ativar o In-App
             if (typeof Notification === "undefined") {
                 console.log("Sem suporte a API Notification. Ativando modo In-App.");
                 return 'granted';
             }
-            
             try {
                 const permission = await Notification.requestPermission();
                 if (permission === "granted") {
@@ -190,11 +192,10 @@
                 return permission;
             } catch (e) {
                 console.error("Erro permissão:", e);
-                return 'granted'; // Fallback em caso de erro da API
+                return 'granted';
             }
         };
 
-        // PWA Setup - Defined as CONST to ensure hoisting and scope safety
         const setupPWA = () => {
             try {
                 const manifest = {
@@ -209,9 +210,7 @@
                 const blob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
                 const link = document.createElement('link'); link.rel = 'manifest'; link.href = URL.createObjectURL(blob);
                 document.head.appendChild(link);
-            } catch (e) {
-                console.error("PWA Setup Error:", e);
-            }
+            } catch (e) {}
         };
 
         // --- Components ---
@@ -282,12 +281,10 @@
 
         function Toast({ title, body, icon, onClose, themeMode }) {
             const colors = THEMES[themeMode] || THEMES.amoled;
-            
             useEffect(() => {
                 const timer = setTimeout(onClose, 4000);
                 return () => clearTimeout(timer);
             }, [onClose]);
-
             return (
                 <div className={`fixed top-4 left-4 right-4 z-[9999] animate-toast-in flex items-center gap-3 p-3 rounded-2xl ${colors.card} border ${colors.border} shadow-2xl shadow-black/50 backdrop-blur-md cursor-pointer`} onClick={onClose}>
                     <img src={icon || "https://cdn-icons-png.flaticon.com/512/5726/5726678.png"} className="w-10 h-10 rounded-xl bg-zinc-800 object-cover" />
@@ -305,6 +302,12 @@
             const unlockTime = app.unlockSurpriseAt || app.scheduledAt;
             const isEffectiveLocked = app.isLocked && (!unlockTime || now < unlockTime);
             
+            const handleQuickDownload = (e) => {
+                e.stopPropagation();
+                if (isPreOrder) return;
+                openSystemLink(app.downloadUrl);
+            };
+
             return (
                 <div onClick={onClick} className={`flex items-center gap-4 py-3 active:opacity-70 rounded-2xl -mx-3 px-3 transition-colors cursor-pointer group relative`}>
                     <div className="relative shrink-0">
@@ -336,7 +339,9 @@
                             </div>
                             
                             <div className="flex flex-col items-end gap-1 shrink-0">
-                                <button className={`btn-get px-4 py-1.5 text-[10px] flex items-center gap-1.5 ${themeMode === 'light' ? 'bg-blue-100 text-blue-600' : 'bg-white/10 text-blue-400'} ${isPreOrder ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                                <button 
+                                    onClick={handleQuickDownload}
+                                    className={`btn-get px-4 py-1.5 text-[10px] flex items-center gap-1.5 ${themeMode === 'light' ? 'bg-blue-100 text-blue-600' : 'bg-white/10 text-blue-400'} ${isPreOrder ? 'opacity-50 cursor-not-allowed' : ''}`}>
                                     <Icon name="Download" size={12} strokeWidth={3} />
                                     {isPreOrder ? 'AGUARDE' : 'OBTER'}
                                 </button>
@@ -350,6 +355,202 @@
                 </div>
             );
         }
+
+        // --- Core Views Definitions (The Missing Pieces) ---
+
+        function SearchView({ apps, onApp, onProfile, onNotifications, profileImage, themeMode }) {
+            const [query, setQuery] = useState('');
+            const [lockedAppId, setLockedAppId] = useState(null);
+            const now = Date.now();
+            const colors = THEMES[themeMode] || THEMES.amoled;
+            
+            const filtered = apps.filter(a => {
+                const isReleased = !a.scheduledAt || now >= a.scheduledAt;
+                const matches = a.name.toLowerCase().includes(query.toLowerCase());
+                return matches && (isReleased || a.isVisibleBeforeLaunch);
+            });
+
+            const handleAppClick = (app) => {
+                const unlockTime = app.unlockSurpriseAt || app.scheduledAt;
+                const isEffectiveLocked = app.isLocked && (!unlockTime || now < unlockTime);
+                if (isEffectiveLocked) { setLockedAppId(app.id); setTimeout(() => setLockedAppId(null), 1000); return; }
+                onApp(app);
+            };
+
+            return (
+                <div className={`animate-fade-in ${colors.bg} min-h-screen transition-colors duration-300`}>
+                    <header className={`pt-14 px-5 pb-4 flex justify-between items-end sticky top-0 z-20 border-b ${colors.border} backdrop-blur-xl ${colors.glass} transition-colors duration-300`}>
+                        <h1 className={`text-3xl font-extrabold tracking-tight ${colors.text}`}>Busca</h1>
+                        <div className="flex items-center gap-3">
+                            <button onClick={onNotifications} className={`w-9 h-9 rounded-full flex items-center justify-center ${colors.input} border ${colors.border} active:scale-95 transition-transform`}>
+                                <Icon name="Bell" size={18} className={colors.text} />
+                            </button>
+                            <button onClick={onProfile} className={`w-9 h-9 rounded-full overflow-hidden ${colors.input} border ${colors.border}`}>
+                                {profileImage ? <img src={profileImage} className="w-full h-full object-cover" /> : <Icon name="User" size={20} className={`text-zinc-500 m-auto mt-2`} />}
+                            </button>
+                        </div>
+                    </header>
+                    <div className="px-5 pt-2 pb-40">
+                        <div className="relative mb-6">
+                            <Icon name="Search" size={18} className="absolute left-3 top-3 text-zinc-500" />
+                            <input className={`w-full ${colors.input} ${colors.text} rounded-xl pl-10 pr-4 py-2.5 text-[15px] outline-none placeholder:text-zinc-500 font-medium transition-colors duration-300`} placeholder="Jogos, Apps, Histórias..." value={query} onChange={(e) => setQuery(e.target.value)} />
+                        </div>
+                        <div className="space-y-1">
+                            {filtered.length === 0 ? <p className={`text-center ${colors.subtext} mt-10 font-medium`}>Nenhum resultado.</p> : 
+                                filtered.map(app => <AppListItem key={app.id} app={app} onClick={() => handleAppClick(app)} lockedAppId={lockedAppId} now={now} themeMode={themeMode} />)
+                            }
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function GenericTabView({ title, apps, onApp, isAdmin, onEdit, themeMode }) {
+            const now = Date.now();
+            const colors = THEMES[themeMode] || THEMES.amoled;
+            const visibleApps = apps.filter(a => (!a.scheduledAt || now >= a.scheduledAt) || a.isVisibleBeforeLaunch);
+            const [lockedAppId, setLockedAppId] = useState(null);
+
+            const handleAppClick = (app) => {
+                const unlockTime = app.unlockSurpriseAt || app.scheduledAt;
+                const isEffectiveLocked = app.isLocked && (!unlockTime || now < unlockTime);
+                if (isEffectiveLocked) { setLockedAppId(app.id); setTimeout(() => setLockedAppId(null), 1000); return; }
+                onApp(app);
+            };
+
+            return (
+                <div className={`animate-fade-in ${colors.bg} min-h-screen transition-colors duration-300`}>
+                    <header className={`pt-14 px-5 pb-6 sticky top-0 z-20 border-b ${colors.border} backdrop-blur-xl ${colors.glass} transition-colors duration-300`}>
+                        <h1 className={`text-3xl font-extrabold tracking-tight ${colors.text}`}>{title}</h1>
+                    </header>
+                    <div className="px-5 pt-2 pb-40 space-y-1">
+                        {visibleApps.map(app => <AppListItem key={app.id} app={app} onClick={() => handleAppClick(app)} isAdmin={isAdmin} onEdit={onEdit} lockedAppId={lockedAppId} now={now} themeMode={themeMode} />)}
+                        {visibleApps.length === 0 && <div className={`text-center ${colors.subtext} mt-20`}>Vazio</div>}
+                    </div>
+                </div>
+            );
+        }
+
+        function TodayView({ apps, highlights, onProfile, onNotifications, onApp, isAdmin, onEdit, profileImage, themeMode, setShowScheduled, setEditingApp, setShowAdminModal }) {
+            const now = Date.now();
+            const colors = THEMES[themeMode] || THEMES.amoled;
+            const [lockedAppId, setLockedAppId] = useState(null);
+            
+            // Filter highlights
+            const filteredHighlights = highlights.filter(h => {
+                if(h.isHidden) return false;
+                const isLive = !h.scheduledAt || now >= h.scheduledAt;
+                const isPaused = h.removedAt && now >= h.removedAt && (!h.reactivatedAt || now < h.reactivatedAt);
+                if(!isLive || isPaused) return false;
+                if(h.recurringDays?.length > 0) {
+                    if(!h.recurringDays.includes(new Date().getDay())) return false;
+                }
+                return true;
+            });
+
+            // Apps logic
+            const comingSoonApps = apps.filter(a => a.scheduledAt && now < a.scheduledAt && a.isVisibleBeforeLaunch).sort((a,b) => a.scheduledAt - b.scheduledAt).slice(0, 3);
+            const releasedApps = apps.filter(a => !a.scheduledAt || now >= a.scheduledAt);
+
+            const handleAppClick = (app) => {
+                const unlockTime = app.unlockSurpriseAt || app.scheduledAt;
+                const isEffectiveLocked = app.isLocked && (!unlockTime || now < unlockTime);
+                if (isEffectiveLocked) { setLockedAppId(app.id); setTimeout(() => setLockedAppId(null), 1000); return; }
+                onApp(app);
+            };
+
+            return (
+                <div className={`animate-fade-in ${colors.bg} min-h-screen pb-40 transition-colors duration-300 relative`}>
+                    <header className={`pt-14 px-5 pb-4 flex justify-between items-center sticky top-0 z-20 backdrop-blur-xl ${colors.glass} transition-colors duration-300`}>
+                        <div>
+                            <p className={`text-[11px] font-bold ${colors.subtext} uppercase tracking-wide mb-0.5`}>{new Date().toLocaleDateString('pt-PT', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+                            <h1 className={`text-3xl font-extrabold tracking-tight ${colors.text}`}>Hoje</h1>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <button onClick={onNotifications} className={`w-9 h-9 rounded-full flex items-center justify-center ${colors.input} border ${colors.border} active:scale-95 transition-transform`}>
+                                <Icon name="Bell" size={18} className={colors.text} />
+                            </button>
+                            <button onClick={onProfile} className={`w-9 h-9 rounded-full overflow-hidden ${colors.input} border ${colors.border} shadow-sm active:scale-95 transition-transform`}>
+                                {profileImage ? <img src={profileImage} className="w-full h-full object-cover" /> : <Icon name="User" size={20} className="text-zinc-500 m-auto mt-2" />}
+                            </button>
+                        </div>
+                    </header>
+
+                    <div className="space-y-10 px-5 pt-2">
+                        <div className="flex overflow-x-auto gap-4 no-scrollbar -mx-5 px-5 snap-x snap-mandatory">
+                            {filteredHighlights.map(h => (
+                                <div key={h.id} className={`snap-center shrink-0 w-[85vw] max-w-[340px] aspect-[4/5] overflow-hidden relative shadow-ios cursor-pointer active:scale-98 transition-transform ${h.type === 'mosaic' ? 'bg-transparent shadow-none' : `${colors.card} rounded-[32px]`}`} onClick={() => h.type !== 'mosaic' && h.appId && onApp(apps.find(a => a.id === h.appId))}>
+                                    
+                                    {h.type === 'mosaic' ? (
+                                        <div className="flex flex-col gap-2 h-full">
+                                            {/* Mosaic Top */}
+                                            <div className="w-full h-[55%] rounded-[24px] overflow-hidden relative shadow-lg" onClick={(e) => { e.stopPropagation(); h.items && h.items[0].appId && onApp(apps.find(a => a.id === h.items[0].appId)) }}>
+                                                <img src={h.items[0].image} className="w-full h-full object-cover" />
+                                                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent p-4 flex flex-col justify-end">
+                                                    <p className="text-[9px] font-bold text-zinc-300 uppercase tracking-widest shadow-black drop-shadow-md">{h.items[0].subtitle}</p>
+                                                    <h3 className="text-xl font-extrabold text-white uppercase leading-none drop-shadow-lg">{h.items[0].title}</h3>
+                                                </div>
+                                            </div>
+                                            {/* Mosaic Bottom Row */}
+                                            <div className="flex gap-2 w-full h-[45%]">
+                                                {[1, 2].map(idx => (
+                                                    <div key={idx} className="flex-1 rounded-[24px] overflow-hidden relative shadow-lg" onClick={(e) => { e.stopPropagation(); h.items && h.items[idx].appId && onApp(apps.find(a => a.id === h.items[idx].appId)) }}>
+                                                        <img src={h.items[idx].image} className="w-full h-full object-cover" />
+                                                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent p-3 flex flex-col justify-end">
+                                                            <p className="text-[8px] font-bold text-zinc-300 uppercase tracking-widest shadow-black drop-shadow-md">{h.items[idx].subtitle}</p>
+                                                            <h4 className="text-sm font-extrabold text-white uppercase leading-none drop-shadow-lg">{h.items[idx].title}</h4>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <VideoPlayer url={h.videoUrl} image={h.image} />
+                                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent p-8 flex flex-col justify-end">
+                                                <p className="text-[10px] font-bold text-zinc-300 uppercase tracking-widest mb-2 shadow-black drop-shadow-md">{h.subtitle}</p>
+                                                <h2 className="text-4xl font-extrabold text-white uppercase leading-none drop-shadow-lg tracking-tight">{h.title}</h2>
+                                            </div>
+                                        </>
+                                    )}
+                                    
+                                </div>
+                            ))}
+                        </div>
+
+                        {comingSoonApps.length > 0 && (
+                            <section>
+                                <div className={`flex items-center justify-between mb-4 border-b ${colors.border} pb-2`}>
+                                    <h3 className="text-xl font-bold text-blue-500">Em Breve</h3>
+                                    <span className={`text-xs font-medium ${colors.subtext}`}>Pré-venda</span>
+                                </div>
+                                <div className="space-y-1">
+                                    {comingSoonApps.map(app => <AppListItem key={app.id} app={app} onClick={() => handleAppClick(app)} isAdmin={isAdmin} onEdit={onEdit} lockedAppId={lockedAppId} now={now} themeMode={themeMode} />)}
+                                </div>
+                            </section>
+                        )}
+
+                        {Array.from(new Set(releasedApps.map(a => a.category))).map(cat => (
+                            <section key={cat}>
+                                <h3 className={`text-xl font-bold mb-4 ${colors.text} border-b ${colors.border} pb-2`}>{cat}</h3>
+                                <div className="space-y-1">
+                                    {releasedApps.filter(a => a.category === cat).map(app => <AppListItem key={app.id} app={app} onClick={() => handleAppClick(app)} isAdmin={isAdmin} onEdit={onEdit} lockedAppId={lockedAppId} now={now} themeMode={themeMode} />)}
+                                </div>
+                            </section>
+                        ))}
+                    </div>
+
+                    {isAdmin && (
+                        <div className="fixed bottom-32 right-5 flex flex-col gap-3 z-30">
+                            <button onClick={() => setShowScheduled(true)} className={`w-12 h-12 ${colors.input} backdrop-blur rounded-full flex items-center justify-center ${colors.text} shadow-lg border ${colors.border} active:scale-90 transition-transform`}><Icon name="Clock" size={20} /></button>
+                            <button onClick={() => { setEditingApp(null); setShowAdminModal(true); }} className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-white shadow-lg shadow-blue-900/30 active:scale-90 transition-transform"><Icon name="Plus" size={24} /></button>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        // --- Other Views ---
 
         function MaintenanceView({ onAdminLogin }) {
             const [showAuth, setShowAuth] = useState(false);
@@ -617,7 +818,6 @@
             };
 
             const save = async () => {
-                // Validation based on layout
                 if (form.layout === 'standard') {
                      if (!form.title || !form.image) return alert("Título e Capa obrigatórios.");
                 } else {
@@ -639,7 +839,6 @@
                     <header className="flex justify-between items-center p-4 sticky top-0 bg-black/90 backdrop-blur-md border-b border-zinc-800 z-10"><h2 className="text-lg font-bold">Editar Story</h2><button onClick={onClose}><Icon name="X" size={24} /></button></header>
                     <div className="p-6 space-y-6 max-w-xl mx-auto w-full pb-20">
                         
-                        {/* Layout Selector */}
                         <div className="space-y-1">
                             <label className="text-xs font-bold text-zinc-500 uppercase ml-1">Estilo do Layout</label>
                             <div className="flex gap-2">
@@ -846,20 +1045,10 @@
             const [showWarning, setShowWarning] = useState(!!app.hasWarning);
             const isEffectiveLocked = app.isLocked && (!app.unlockSurpriseAt && (!app.scheduledAt || now < app.scheduledAt));
 
+            // CORREÇÃO: Download nos detalhes
             const handleDownload = () => { 
                 if (isPreOrder) return;
-                if (!app.downloadUrl) return alert("Link indisponível.");
-
-                // Força a abertura no navegador do sistema (híbrido para APK/Web)
-                const url = app.downloadUrl;
-                
-                // Tenta abrir direto
-                const win = window.open(url, '_blank');
-                
-                // Se falhar (null), tenta redirecionar a janela atual
-                if (!win) {
-                    window.location.href = url;
-                }
+                openSystemLink(app.downloadUrl);
             };
             
             const handleShare = async () => {
@@ -968,6 +1157,7 @@
             );
         }
 
+        // --- Profile Modal Definition ---
         function ProfileModal({ isAdmin, setAdmin, highlights, onAddHigh, onEditHigh, onClose, profileImage, onImageUpload, theme, setTheme }) {
             const [userLogin, setUserLogin] = useState('');
             const [passLogin, setPassLogin] = useState('');
@@ -977,7 +1167,7 @@
             const [deleteConfirmation, setDeleteConfirmation] = useState(null);
             const [appUpdateConfig, setAppUpdateConfig] = useState({ latestVersion: APP_VERSION, apkUrl: '' });
             const [showUpdateConfig, setShowUpdateConfig] = useState(false);
-            const [devClicks, setDevClicks] = useState(0); // Secret Click Counter
+            const [devClicks, setDevClicks] = useState(0); 
             
             // Account Edit State
             const [editUser, setEditUser] = useState(localStorage.getItem('nexus_username') || '');
@@ -1002,7 +1192,6 @@
                 });
             }, []);
             
-            // Load current password for editing if not admin
             useEffect(() => {
                 if(!isAdmin && currentUsername) {
                    db.collection('artifacts').doc(DB_APP_ID).collection('public').doc('accounts').collection('users').doc(currentUsername).get().then(doc => {
@@ -1245,200 +1434,6 @@
             );
         }
 
-        // --- Core Views Definitions ---
-
-        function SearchView({ apps, onApp, onProfile, onNotifications, profileImage, themeMode }) {
-            const [query, setQuery] = useState('');
-            const [lockedAppId, setLockedAppId] = useState(null);
-            const now = Date.now();
-            const colors = THEMES[themeMode] || THEMES.amoled;
-            
-            const filtered = apps.filter(a => {
-                const isReleased = !a.scheduledAt || now >= a.scheduledAt;
-                const matches = a.name.toLowerCase().includes(query.toLowerCase());
-                return matches && (isReleased || a.isVisibleBeforeLaunch);
-            });
-
-            const handleAppClick = (app) => {
-                const unlockTime = app.unlockSurpriseAt || app.scheduledAt;
-                const isEffectiveLocked = app.isLocked && (!unlockTime || now < unlockTime);
-                if (isEffectiveLocked) { setLockedAppId(app.id); setTimeout(() => setLockedAppId(null), 1000); return; }
-                onApp(app);
-            };
-
-            return (
-                <div className={`animate-fade-in ${colors.bg} min-h-screen transition-colors duration-300`}>
-                    <header className={`pt-14 px-5 pb-4 flex justify-between items-end sticky top-0 z-20 border-b ${colors.border} backdrop-blur-xl ${colors.glass} transition-colors duration-300`}>
-                        <h1 className={`text-3xl font-extrabold tracking-tight ${colors.text}`}>Busca</h1>
-                        <div className="flex items-center gap-3">
-                            <button onClick={onNotifications} className={`w-9 h-9 rounded-full flex items-center justify-center ${colors.input} border ${colors.border} active:scale-95 transition-transform`}>
-                                <Icon name="Bell" size={18} className={colors.text} />
-                            </button>
-                            <button onClick={onProfile} className={`w-9 h-9 rounded-full overflow-hidden ${colors.input} border ${colors.border}`}>
-                                {profileImage ? <img src={profileImage} className="w-full h-full object-cover" /> : <Icon name="User" size={20} className={`text-zinc-500 m-auto mt-2`} />}
-                            </button>
-                        </div>
-                    </header>
-                    <div className="px-5 pt-2 pb-40">
-                        <div className="relative mb-6">
-                            <Icon name="Search" size={18} className="absolute left-3 top-3 text-zinc-500" />
-                            <input className={`w-full ${colors.input} ${colors.text} rounded-xl pl-10 pr-4 py-2.5 text-[15px] outline-none placeholder:text-zinc-500 font-medium transition-colors duration-300`} placeholder="Jogos, Apps, Histórias..." value={query} onChange={(e) => setQuery(e.target.value)} />
-                        </div>
-                        <div className="space-y-1">
-                            {filtered.length === 0 ? <p className={`text-center ${colors.subtext} mt-10 font-medium`}>Nenhum resultado.</p> : 
-                                filtered.map(app => <AppListItem key={app.id} app={app} onClick={() => handleAppClick(app)} lockedAppId={lockedAppId} now={now} themeMode={themeMode} />)
-                            }
-                        </div>
-                    </div>
-                </div>
-            );
-        }
-
-        function GenericTabView({ title, apps, onApp, isAdmin, onEdit, themeMode }) {
-            const now = Date.now();
-            const colors = THEMES[themeMode] || THEMES.amoled;
-            const visibleApps = apps.filter(a => (!a.scheduledAt || now >= a.scheduledAt) || a.isVisibleBeforeLaunch);
-            const [lockedAppId, setLockedAppId] = useState(null);
-
-            const handleAppClick = (app) => {
-                const unlockTime = app.unlockSurpriseAt || app.scheduledAt;
-                const isEffectiveLocked = app.isLocked && (!unlockTime || now < unlockTime);
-                if (isEffectiveLocked) { setLockedAppId(app.id); setTimeout(() => setLockedAppId(null), 1000); return; }
-                onApp(app);
-            };
-
-            return (
-                <div className={`animate-fade-in ${colors.bg} min-h-screen transition-colors duration-300`}>
-                    <header className={`pt-14 px-5 pb-6 sticky top-0 z-20 border-b ${colors.border} backdrop-blur-xl ${colors.glass} transition-colors duration-300`}>
-                        <h1 className={`text-3xl font-extrabold tracking-tight ${colors.text}`}>{title}</h1>
-                    </header>
-                    <div className="px-5 pt-2 pb-40 space-y-1">
-                        {visibleApps.map(app => <AppListItem key={app.id} app={app} onClick={() => handleAppClick(app)} isAdmin={isAdmin} onEdit={onEdit} lockedAppId={lockedAppId} now={now} themeMode={themeMode} />)}
-                        {visibleApps.length === 0 && <div className={`text-center ${colors.subtext} mt-20`}>Vazio</div>}
-                    </div>
-                </div>
-            );
-        }
-
-        function TodayView({ apps, highlights, onProfile, onNotifications, onApp, isAdmin, onEdit, profileImage, themeMode, setShowScheduled, setEditingApp, setShowAdminModal }) {
-            const now = Date.now();
-            const colors = THEMES[themeMode] || THEMES.amoled;
-            const [lockedAppId, setLockedAppId] = useState(null);
-            
-            // Filter highlights
-            const filteredHighlights = highlights.filter(h => {
-                if(h.isHidden) return false;
-                const isLive = !h.scheduledAt || now >= h.scheduledAt;
-                const isPaused = h.removedAt && now >= h.removedAt && (!h.reactivatedAt || now < h.reactivatedAt);
-                if(!isLive || isPaused) return false;
-                if(h.recurringDays?.length > 0) {
-                    if(!h.recurringDays.includes(new Date().getDay())) return false;
-                }
-                return true;
-            });
-
-            // Apps logic
-            const comingSoonApps = apps.filter(a => a.scheduledAt && now < a.scheduledAt && a.isVisibleBeforeLaunch).sort((a,b) => a.scheduledAt - b.scheduledAt).slice(0, 3);
-            const releasedApps = apps.filter(a => !a.scheduledAt || now >= a.scheduledAt);
-
-            const handleAppClick = (app) => {
-                const unlockTime = app.unlockSurpriseAt || app.scheduledAt;
-                const isEffectiveLocked = app.isLocked && (!unlockTime || now < unlockTime);
-                if (isEffectiveLocked) { setLockedAppId(app.id); setTimeout(() => setLockedAppId(null), 1000); return; }
-                onApp(app);
-            };
-
-            return (
-                <div className={`animate-fade-in ${colors.bg} min-h-screen pb-40 transition-colors duration-300 relative`}>
-                    <header className={`pt-14 px-5 pb-4 flex justify-between items-center sticky top-0 z-20 backdrop-blur-xl ${colors.glass} transition-colors duration-300`}>
-                        <div>
-                            <p className={`text-[11px] font-bold ${colors.subtext} uppercase tracking-wide mb-0.5`}>{new Date().toLocaleDateString('pt-PT', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
-                            <h1 className={`text-3xl font-extrabold tracking-tight ${colors.text}`}>Hoje</h1>
-                        </div>
-                        <div className="flex items-center gap-3">
-                            <button onClick={onNotifications} className={`w-9 h-9 rounded-full flex items-center justify-center ${colors.input} border ${colors.border} active:scale-95 transition-transform`}>
-                                <Icon name="Bell" size={18} className={colors.text} />
-                            </button>
-                            <button onClick={onProfile} className={`w-9 h-9 rounded-full overflow-hidden ${colors.input} border ${colors.border} shadow-sm active:scale-95 transition-transform`}>
-                                {profileImage ? <img src={profileImage} className="w-full h-full object-cover" /> : <Icon name="User" size={20} className="text-zinc-500 m-auto mt-2" />}
-                            </button>
-                        </div>
-                    </header>
-
-                    <div className="space-y-10 px-5 pt-2">
-                        <div className="flex overflow-x-auto gap-4 no-scrollbar -mx-5 px-5 snap-x snap-mandatory">
-                            {filteredHighlights.map(h => (
-                                <div key={h.id} className={`snap-center shrink-0 w-[85vw] max-w-[340px] aspect-[4/5] overflow-hidden relative shadow-ios cursor-pointer active:scale-98 transition-transform ${h.type === 'mosaic' ? 'bg-transparent shadow-none' : `${colors.card} rounded-[32px]`}`} onClick={() => h.type !== 'mosaic' && h.appId && onApp(apps.find(a => a.id === h.appId))}>
-                                    
-                                    {h.type === 'mosaic' ? (
-                                        <div className="flex flex-col gap-2 h-full">
-                                            {/* Mosaic Top */}
-                                            <div className="w-full h-[55%] rounded-[24px] overflow-hidden relative shadow-lg" onClick={(e) => { e.stopPropagation(); h.items && h.items[0].appId && onApp(apps.find(a => a.id === h.items[0].appId)) }}>
-                                                <img src={h.items[0].image} className="w-full h-full object-cover" />
-                                                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent p-4 flex flex-col justify-end">
-                                                    <p className="text-[9px] font-bold text-zinc-300 uppercase tracking-widest shadow-black drop-shadow-md">{h.items[0].subtitle}</p>
-                                                    <h3 className="text-xl font-extrabold text-white uppercase leading-none drop-shadow-lg">{h.items[0].title}</h3>
-                                                </div>
-                                            </div>
-                                            {/* Mosaic Bottom Row */}
-                                            <div className="flex gap-2 w-full h-[45%]">
-                                                {[1, 2].map(idx => (
-                                                    <div key={idx} className="flex-1 rounded-[24px] overflow-hidden relative shadow-lg" onClick={(e) => { e.stopPropagation(); h.items && h.items[idx].appId && onApp(apps.find(a => a.id === h.items[idx].appId)) }}>
-                                                        <img src={h.items[idx].image} className="w-full h-full object-cover" />
-                                                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent p-3 flex flex-col justify-end">
-                                                            <p className="text-[8px] font-bold text-zinc-300 uppercase tracking-widest shadow-black drop-shadow-md">{h.items[idx].subtitle}</p>
-                                                            <h4 className="text-sm font-extrabold text-white uppercase leading-none drop-shadow-lg">{h.items[idx].title}</h4>
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <>
-                                            <VideoPlayer url={h.videoUrl} image={h.image} />
-                                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent p-8 flex flex-col justify-end">
-                                                <p className="text-[10px] font-bold text-zinc-300 uppercase tracking-widest mb-2 shadow-black drop-shadow-md">{h.subtitle}</p>
-                                                <h2 className="text-4xl font-extrabold text-white uppercase leading-none drop-shadow-lg tracking-tight">{h.title}</h2>
-                                            </div>
-                                        </>
-                                    )}
-                                    
-                                </div>
-                            ))}
-                        </div>
-
-                        {comingSoonApps.length > 0 && (
-                            <section>
-                                <div className={`flex items-center justify-between mb-4 border-b ${colors.border} pb-2`}>
-                                    <h3 className="text-xl font-bold text-blue-500">Em Breve</h3>
-                                </div>
-                                <div className="space-y-1">
-                                    {comingSoonApps.map(app => <AppListItem key={app.id} app={app} onClick={() => handleAppClick(app)} isAdmin={isAdmin} onEdit={onEdit} lockedAppId={lockedAppId} now={now} themeMode={themeMode} />)}
-                                </div>
-                            </section>
-                        )}
-
-                        {Array.from(new Set(releasedApps.map(a => a.category))).map(cat => (
-                            <section key={cat}>
-                                <h3 className={`text-xl font-bold mb-4 ${colors.text} border-b ${colors.border} pb-2`}>{cat}</h3>
-                                <div className="space-y-1">
-                                    {releasedApps.filter(a => a.category === cat).map(app => <AppListItem key={app.id} app={app} onClick={() => handleAppClick(app)} isAdmin={isAdmin} onEdit={onEdit} lockedAppId={lockedAppId} now={now} themeMode={themeMode} />)}
-                                </div>
-                            </section>
-                        ))}
-                    </div>
-
-                    {isAdmin && (
-                        <div className="fixed bottom-32 right-5 flex flex-col gap-3 z-30">
-                            <button onClick={() => setShowScheduled(true)} className={`w-12 h-12 ${colors.input} backdrop-blur rounded-full flex items-center justify-center ${colors.text} shadow-lg border ${colors.border} active:scale-90 transition-transform`}><Icon name="Clock" size={20} /></button>
-                            <button onClick={() => { setEditingApp(null); setShowAdminModal(true); }} className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-white shadow-lg shadow-blue-900/30 active:scale-90 transition-transform"><Icon name="Plus" size={24} /></button>
-                        </div>
-                    )}
-                </div>
-            );
-        }
-
-        // --- Main App ---
         function App() {
             const [view, setView] = useState('loading');
             const [user, setUser] = useState(null);
@@ -1457,15 +1452,13 @@
             const [showScheduled, setShowScheduled] = useState(false);
             const [showNotifications, setShowNotifications] = useState(false);
             const [isMaintenance, setIsMaintenance] = useState(false);
-            const [toast, setToast] = useState(null); // Toast state
+            const [toast, setToast] = useState(null); 
             
-            // Refs for tracking changes
             const prevAppsRef = useRef([]);
             const isFirstLoad = useRef(true);
 
             const colors = THEMES[theme] || THEMES.amoled;
 
-            // In-App Notification Listener
             useEffect(() => {
                 const handleToast = (e) => setToast(e.detail);
                 window.addEventListener('nexus-toast', handleToast);
@@ -1495,9 +1488,7 @@
                 setupPWA();
                 const unsub = auth.onAuthStateChanged(u => { 
                     setUser(u); 
-                    // Check local login status
                     if(localStorage.getItem('nexus_logged_in') === 'true') {
-                        // Load stored profile image for user if available
                         const storedUser = localStorage.getItem('nexus_username');
                         if (storedUser && storedUser !== 'DN') {
                              db.collection('artifacts').doc(DB_APP_ID).collection('public').doc('accounts').collection('users').doc(storedUser).get().then(doc => {
@@ -1517,7 +1508,6 @@
                 if (!user) return;
                 const ref = db.collection('artifacts').doc(DB_APP_ID);
                 
-                // Apps listener with notification logic
                 const u1 = ref.collection('public').doc('data').collection('apps').onSnapshot(s => {
                     const currentApps = s.docs.map(d => ({id: d.id, ...d.data()}));
                     
@@ -1540,7 +1530,7 @@
 
                 const u2 = ref.collection('public').doc('data').collection('highlights').onSnapshot(s => setHighlights(s.docs.map(d => ({id: d.id, ...d.data()}))));
                 const u3 = ref.collection('public').doc('config').onSnapshot(d => setIsMaintenance(d.exists ? d.data().maintenance : false));
-                // Only load anonymous user profile image if we are admin or fallback, otherwise the account image is loaded in handleLogin/init
+                
                 const u4 = ref.collection('users').doc(user.uid).collection('profile').doc('info').onSnapshot(d => {
                      if(d.exists && isAdmin) setProfileImage(d.data().image);
                 });
@@ -1550,12 +1540,10 @@
 
             const handleImageUpload = async (base64) => { 
                 setProfileImage(base64);
-                // If user is logged in, save to their account doc too
                 const currentUsername = localStorage.getItem('nexus_username');
                 if(!isAdmin && currentUsername) {
                      await db.collection('artifacts').doc(DB_APP_ID).collection('public').doc('accounts').collection('users').doc(currentUsername).update({ image: base64 });
                 }
-                // Fallback to anonymous UID storage
                 if (user) await db.collection('artifacts').doc(DB_APP_ID).collection('users').doc(user.uid).collection('profile').doc('info').set({ image: base64 }, { merge: true }); 
             };
 
@@ -1566,7 +1554,6 @@
             return (
                 <div className={`h-screen w-full ${colors.bg} overflow-hidden flex flex-col font-sans transition-colors duration-300`}>
                     
-                    {/* Toast Notification Render */}
                     {toast && <Toast title={toast.title} body={toast.body} icon={toast.icon} themeMode={theme} onClose={() => setToast(null)} />}
 
                     <div className="flex-1 overflow-y-auto pb-40 no-scrollbar">
