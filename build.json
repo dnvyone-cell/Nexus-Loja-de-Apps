@@ -1,0 +1,11 @@
+{
+    "android": {
+        "release": {
+            "keystore": "nexus.keystore",
+            "storePassword": "123456",
+            "alias": "nexus",
+            "password": "123456",
+            "keystoreType": ""
+        }
+    }
+}
