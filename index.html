@@ -51,7 +51,13 @@
             75% { transform: translateX(4px) rotate(5deg); }
         }
 
+        @keyframes toast-slide-in {
+            from { transform: translateY(-100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
         .animate-shake { animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both; }
+        .animate-toast-in { animation: toast-slide-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
         
         .safe-top { padding-top: env(safe-area-inset-top); }
         .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
@@ -109,7 +115,7 @@
         const { useState, useEffect, useMemo, useRef } = React;
 
         // VERSÃO ATUAL DO SEU APP
-        const APP_VERSION = "2.1"; 
+        const APP_VERSION = "2.9"; 
 
         const firebaseConfig = {
             apiKey: "AIzaSyDcWSyP6S7LDuGQ1ZjFqKAHCZ8mjwJhEKY",
@@ -154,33 +160,42 @@
             return (match && match[2].length === 11) ? match[2] : null;
         };
 
-        // Helper Notification Safe Wrapper
+        // --- Notification Logic (Hybrid System) ---
         const sendNotification = (title, body, icon) => {
+            // 1. Tenta Notificação Nativa
             try {
                 if (typeof Notification !== "undefined" && Notification.permission === "granted") {
                     new Notification(title, { body, icon, tag: 'nexus-update' });
+                    return; // Sucesso nativo, sai.
                 }
-            } catch (e) { console.log("Notificação não suportada neste ambiente"); }
+            } catch (e) { console.log("Notificação nativa indisponível"); }
+
+            // 2. Fallback: Notificação In-App (Dispara evento para o React)
+            const event = new CustomEvent('nexus-toast', { detail: { title, body, icon } });
+            window.dispatchEvent(event);
         };
 
         const requestNotificationPermission = async () => {
+            // Se não tem suporte nativo (APK/WebView), simulamos sucesso para ativar o In-App
+            if (typeof Notification === "undefined") {
+                console.log("Sem suporte a API Notification. Ativando modo In-App.");
+                return 'granted';
+            }
+            
             try {
-                if (typeof Notification === "undefined") {
-                    alert("Seu dispositivo não suporta notificações web.");
-                    return 'denied';
-                }
                 const permission = await Notification.requestPermission();
                 if (permission === "granted") {
-                    sendNotification("Notificações Ativadas", "Você será avisado sobre novos apps!", "https://cdn-icons-png.flaticon.com/512/5726/5726678.png");
+                    sendNotification("Notificações Ativadas", "Você receberá alertas nativos ou no app!", "https://cdn-icons-png.flaticon.com/512/5726/5726678.png");
                 }
                 return permission;
             } catch (e) {
                 console.error("Erro permissão:", e);
-                return 'denied';
+                return 'granted'; // Fallback em caso de erro da API
             }
         };
 
-        function setupPWA() {
+        // PWA Setup - Defined as CONST to ensure hoisting and scope safety
+        const setupPWA = () => {
             try {
                 const manifest = {
                     "name": "Nexus Store",
@@ -194,10 +209,13 @@
                 const blob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
                 const link = document.createElement('link'); link.rel = 'manifest'; link.href = URL.createObjectURL(blob);
                 document.head.appendChild(link);
-            } catch (e) {}
-        }
+            } catch (e) {
+                console.error("PWA Setup Error:", e);
+            }
+        };
 
-        // --- UI Components ---
+        // --- Components ---
+
         function Icon({ name, size = 24, className = "" }) {
             const containerRef = useRef(null);
             useEffect(() => {
@@ -262,6 +280,25 @@
             return <video src={url} poster={image} autoPlay loop muted playsInline className="absolute inset-0 w-full h-full object-cover" onTimeUpdate={handleTimeUpdate} />;
         }
 
+        function Toast({ title, body, icon, onClose, themeMode }) {
+            const colors = THEMES[themeMode] || THEMES.amoled;
+            
+            useEffect(() => {
+                const timer = setTimeout(onClose, 4000);
+                return () => clearTimeout(timer);
+            }, [onClose]);
+
+            return (
+                <div className={`fixed top-4 left-4 right-4 z-[9999] animate-toast-in flex items-center gap-3 p-3 rounded-2xl ${colors.card} border ${colors.border} shadow-2xl shadow-black/50 backdrop-blur-md cursor-pointer`} onClick={onClose}>
+                    <img src={icon || "https://cdn-icons-png.flaticon.com/512/5726/5726678.png"} className="w-10 h-10 rounded-xl bg-zinc-800 object-cover" />
+                    <div className="flex-1 min-w-0">
+                        <h4 className={`text-sm font-bold ${colors.text}`}>{title}</h4>
+                        <p className={`text-xs ${colors.subtext} truncate`}>{body}</p>
+                    </div>
+                </div>
+            );
+        }
+
         function AppListItem({ app, onClick, isAdmin, onEdit, lockedAppId, now, themeMode }) {
             const colors = THEMES[themeMode] || THEMES.amoled;
             const isPreOrder = app.scheduledAt && now < app.scheduledAt;
@@ -314,7 +351,6 @@
             );
         }
 
-        // --- View de Manutenção ---
         function MaintenanceView({ onAdminLogin }) {
             const [showAuth, setShowAuth] = useState(false);
             const [userLogin, setUserLogin] = useState('');
@@ -353,7 +389,6 @@
             );
         }
 
-        // --- View de Login ---
         function LoginView({ onLogin }) {
             const [mode, setMode] = useState('login'); // login | register
             const [username, setUsername] = useState('');
@@ -449,17 +484,15 @@
             );
         }
 
-        // --- Modais ---
         function NotificationsModal({ onClose, themeMode, apps }) {
             const colors = THEMES[themeMode] || THEMES.amoled;
             const [permission, setPermission] = useState('default');
 
-            // Check permission safely on mount
             useEffect(() => {
                 if (typeof Notification !== 'undefined') {
                     setPermission(Notification.permission);
                 } else {
-                    setPermission('denied');
+                    setPermission('granted'); 
                 }
             }, []);
 
@@ -480,7 +513,7 @@
                          <div className={`p-4 rounded-2xl border ${colors.border} ${colors.card} flex items-center justify-between shadow-lg`}>
                              <div>
                                  <p className={`font-bold text-sm ${colors.text}`}>Alertas de Novos Apps</p>
-                                 <p className={`text-xs ${colors.subtext}`}>{permission === 'granted' ? 'Você será avisado.' : 'Ative para não perder nada.'}</p>
+                                 <p className={`text-xs ${colors.subtext}`}>{permission === 'granted' ? 'Alertas In-App/Nativos Ativos.' : 'Ative para não perder nada.'}</p>
                              </div>
                              <button onClick={request} className={`px-4 py-2 rounded-full text-[10px] font-bold tracking-wide uppercase shadow-lg ${permission === 'granted' ? 'bg-green-500/20 text-green-500' : 'bg-blue-600 text-white'}`}>
                                 {permission === 'granted' ? 'Ativado' : 'Ativar'}
@@ -560,7 +593,6 @@
             );
         }
 
-        // --- Modais de Edição ---
         function HighlightModal({ editingHighlight, apps, onClose }) {
             const [form, setForm] = useState({ layout: 'standard', items: [{}, {}, {}] });
             const [loading, setLoading] = useState(false);
@@ -799,315 +831,6 @@
                         <div className="flex gap-4 pt-4">
                             {editingApp && <button onClick={() => { if(confirm('Deletar?')) db.collection('artifacts').doc(DB_APP_ID).collection('public').doc('data').collection('apps').doc(editingApp.id).delete().then(onClose)}} className="p-4 bg-red-500/10 text-red-500 rounded-xl"><Icon name="Trash2" /></button>}
                             <button onClick={save} className="flex-1 bg-blue-600 text-white font-bold py-4 rounded-xl">{loading ? 'Salvando...' : 'Salvar App'}</button>
-                        </div>
-                    </div>
-                </div>
-            );
-        }
-
-        // --- Core Views ---
-
-        function SearchView({ apps, onApp, onProfile, onNotifications, profileImage, themeMode }) {
-            const [query, setQuery] = useState('');
-            const [lockedAppId, setLockedAppId] = useState(null);
-            const now = Date.now();
-            const colors = THEMES[themeMode] || THEMES.amoled;
-            
-            const filtered = apps.filter(a => {
-                const isReleased = !a.scheduledAt || now >= a.scheduledAt;
-                const matches = a.name.toLowerCase().includes(query.toLowerCase());
-                return matches && (isReleased || a.isVisibleBeforeLaunch);
-            });
-
-            const handleAppClick = (app) => {
-                const unlockTime = app.unlockSurpriseAt || app.scheduledAt;
-                const isEffectiveLocked = app.isLocked && (!unlockTime || now < unlockTime);
-                if (isEffectiveLocked) { setLockedAppId(app.id); setTimeout(() => setLockedAppId(null), 1000); return; }
-                onApp(app);
-            };
-
-            return (
-                <div className={`animate-fade-in ${colors.bg} min-h-screen transition-colors duration-300`}>
-                    <header className={`pt-14 px-5 pb-4 flex justify-between items-end sticky top-0 z-20 border-b ${colors.border} backdrop-blur-xl ${colors.glass} transition-colors duration-300`}>
-                        <h1 className={`text-3xl font-extrabold tracking-tight ${colors.text}`}>Busca</h1>
-                        <div className="flex items-center gap-3">
-                            <button onClick={onNotifications} className={`w-9 h-9 rounded-full flex items-center justify-center ${colors.input} border ${colors.border} active:scale-95 transition-transform`}>
-                                <Icon name="Bell" size={18} className={colors.text} />
-                            </button>
-                            <button onClick={onProfile} className={`w-9 h-9 rounded-full overflow-hidden ${colors.input} border ${colors.border}`}>
-                                {profileImage ? <img src={profileImage} className="w-full h-full object-cover" /> : <Icon name="User" size={20} className={`text-zinc-500 m-auto mt-2`} />}
-                            </button>
-                        </div>
-                    </header>
-                    <div className="px-5 pt-2 pb-40">
-                        <div className="relative mb-6">
-                            <Icon name="Search" size={18} className="absolute left-3 top-3 text-zinc-500" />
-                            <input className={`w-full ${colors.input} ${colors.text} rounded-xl pl-10 pr-4 py-2.5 text-[15px] outline-none placeholder:text-zinc-500 font-medium transition-colors duration-300`} placeholder="Jogos, Apps, Histórias..." value={query} onChange={(e) => setQuery(e.target.value)} />
-                        </div>
-                        <div className="space-y-1">
-                            {filtered.length === 0 ? <p className={`text-center ${colors.subtext} mt-10 font-medium`}>Nenhum resultado.</p> : 
-                                filtered.map(app => <AppListItem key={app.id} app={app} onClick={() => handleAppClick(app)} lockedAppId={lockedAppId} now={now} themeMode={themeMode} />)
-                            }
-                        </div>
-                    </div>
-                </div>
-            );
-        }
-
-        function GenericTabView({ title, apps, onApp, isAdmin, onEdit, themeMode }) {
-            const now = Date.now();
-            const colors = THEMES[themeMode] || THEMES.amoled;
-            const visibleApps = apps.filter(a => (!a.scheduledAt || now >= a.scheduledAt) || a.isVisibleBeforeLaunch);
-            const [lockedAppId, setLockedAppId] = useState(null);
-
-            const handleAppClick = (app) => {
-                const unlockTime = app.unlockSurpriseAt || app.scheduledAt;
-                const isEffectiveLocked = app.isLocked && (!unlockTime || now < unlockTime);
-                if (isEffectiveLocked) { setLockedAppId(app.id); setTimeout(() => setLockedAppId(null), 1000); return; }
-                onApp(app);
-            };
-
-            return (
-                <div className={`animate-fade-in ${colors.bg} min-h-screen transition-colors duration-300`}>
-                    <header className={`pt-14 px-5 pb-6 sticky top-0 z-20 border-b ${colors.border} backdrop-blur-xl ${colors.glass} transition-colors duration-300`}>
-                        <h1 className={`text-3xl font-extrabold tracking-tight ${colors.text}`}>{title}</h1>
-                    </header>
-                    <div className="px-5 pt-2 pb-40 space-y-1">
-                        {visibleApps.map(app => <AppListItem key={app.id} app={app} onClick={() => handleAppClick(app)} isAdmin={isAdmin} onEdit={onEdit} lockedAppId={lockedAppId} now={now} themeMode={themeMode} />)}
-                        {visibleApps.length === 0 && <div className={`text-center ${colors.subtext} mt-20`}>Vazio</div>}
-                    </div>
-                </div>
-            );
-        }
-
-        function TodayView({ apps, highlights, onProfile, onNotifications, onApp, isAdmin, onEdit, profileImage, themeMode, setShowScheduled, setEditingApp, setShowAdminModal }) {
-            const now = Date.now();
-            const colors = THEMES[themeMode] || THEMES.amoled;
-            const [lockedAppId, setLockedAppId] = useState(null);
-            
-            // Filter highlights
-            const filteredHighlights = highlights.filter(h => {
-                if(h.isHidden) return false;
-                const isLive = !h.scheduledAt || now >= h.scheduledAt;
-                const isPaused = h.removedAt && now >= h.removedAt && (!h.reactivatedAt || now < h.reactivatedAt);
-                if(!isLive || isPaused) return false;
-                if(h.recurringDays?.length > 0) {
-                    if(!h.recurringDays.includes(new Date().getDay())) return false;
-                }
-                return true;
-            });
-
-            // Apps logic
-            const comingSoonApps = apps.filter(a => a.scheduledAt && now < a.scheduledAt && a.isVisibleBeforeLaunch).sort((a,b) => a.scheduledAt - b.scheduledAt).slice(0, 3);
-            const releasedApps = apps.filter(a => !a.scheduledAt || now >= a.scheduledAt);
-
-            const handleAppClick = (app) => {
-                const unlockTime = app.unlockSurpriseAt || app.scheduledAt;
-                const isEffectiveLocked = app.isLocked && (!unlockTime || now < unlockTime);
-                if (isEffectiveLocked) { setLockedAppId(app.id); setTimeout(() => setLockedAppId(null), 1000); return; }
-                onApp(app);
-            };
-
-            return (
-                <div className={`animate-fade-in ${colors.bg} min-h-screen pb-40 transition-colors duration-300 relative`}>
-                    <header className={`pt-14 px-5 pb-4 flex justify-between items-center sticky top-0 z-20 backdrop-blur-xl ${colors.glass} transition-colors duration-300`}>
-                        <div>
-                            <p className={`text-[11px] font-bold ${colors.subtext} uppercase tracking-wide mb-0.5`}>{new Date().toLocaleDateString('pt-PT', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
-                            <h1 className={`text-3xl font-extrabold tracking-tight ${colors.text}`}>Hoje</h1>
-                        </div>
-                        <div className="flex items-center gap-3">
-                            <button onClick={onNotifications} className={`w-9 h-9 rounded-full flex items-center justify-center ${colors.input} border ${colors.border} active:scale-95 transition-transform`}>
-                                <Icon name="Bell" size={18} className={colors.text} />
-                            </button>
-                            <button onClick={onProfile} className={`w-9 h-9 rounded-full overflow-hidden ${colors.input} border ${colors.border} shadow-sm active:scale-95 transition-transform`}>
-                                {profileImage ? <img src={profileImage} className="w-full h-full object-cover" /> : <Icon name="User" size={20} className="text-zinc-500 m-auto mt-2" />}
-                            </button>
-                        </div>
-                    </header>
-
-                    <div className="space-y-10 px-5 pt-2">
-                        <div className="flex overflow-x-auto gap-4 no-scrollbar -mx-5 px-5 snap-x snap-mandatory">
-                            {filteredHighlights.map(h => (
-                                <div key={h.id} className={`snap-center shrink-0 w-[85vw] max-w-[340px] aspect-[4/5] overflow-hidden relative shadow-ios cursor-pointer active:scale-98 transition-transform ${h.type === 'mosaic' ? 'bg-transparent shadow-none' : `${colors.card} rounded-[32px]`}`} onClick={() => h.type !== 'mosaic' && h.appId && onApp(apps.find(a => a.id === h.appId))}>
-                                    
-                                    {h.type === 'mosaic' ? (
-                                        <div className="flex flex-col gap-2 h-full">
-                                            {/* Mosaic Top */}
-                                            <div className="w-full h-[55%] rounded-[24px] overflow-hidden relative shadow-lg" onClick={(e) => { e.stopPropagation(); h.items && h.items[0].appId && onApp(apps.find(a => a.id === h.items[0].appId)) }}>
-                                                <img src={h.items[0].image} className="w-full h-full object-cover" />
-                                                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent p-4 flex flex-col justify-end">
-                                                    <p className="text-[9px] font-bold text-zinc-300 uppercase tracking-widest shadow-black drop-shadow-md">{h.items[0].subtitle}</p>
-                                                    <h3 className="text-xl font-extrabold text-white uppercase leading-none drop-shadow-lg">{h.items[0].title}</h3>
-                                                </div>
-                                            </div>
-                                            {/* Mosaic Bottom Row */}
-                                            <div className="flex gap-2 w-full h-[45%]">
-                                                {[1, 2].map(idx => (
-                                                    <div key={idx} className="flex-1 rounded-[24px] overflow-hidden relative shadow-lg" onClick={(e) => { e.stopPropagation(); h.items && h.items[idx].appId && onApp(apps.find(a => a.id === h.items[idx].appId)) }}>
-                                                        <img src={h.items[idx].image} className="w-full h-full object-cover" />
-                                                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent p-3 flex flex-col justify-end">
-                                                            <p className="text-[8px] font-bold text-zinc-300 uppercase tracking-widest shadow-black drop-shadow-md">{h.items[idx].subtitle}</p>
-                                                            <h4 className="text-sm font-extrabold text-white uppercase leading-none drop-shadow-lg">{h.items[idx].title}</h4>
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <>
-                                            <VideoPlayer url={h.videoUrl} image={h.image} />
-                                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent p-8 flex flex-col justify-end">
-                                                <p className="text-[10px] font-bold text-zinc-300 uppercase tracking-widest mb-2 shadow-black drop-shadow-md">{h.subtitle}</p>
-                                                <h2 className="text-4xl font-extrabold text-white uppercase leading-none drop-shadow-lg tracking-tight">{h.title}</h2>
-                                            </div>
-                                        </>
-                                    )}
-                                    
-                                </div>
-                            ))}
-                        </div>
-
-                        {comingSoonApps.length > 0 && (
-                            <section>
-                                <div className={`flex items-center justify-between mb-4 border-b ${colors.border} pb-2`}>
-                                    <h3 className="text-xl font-bold text-blue-500">Em Breve</h3>
-                                </div>
-                                <div className="space-y-1">
-                                    {comingSoonApps.map(app => <AppListItem key={app.id} app={app} onClick={() => handleAppClick(app)} isAdmin={isAdmin} onEdit={onEdit} lockedAppId={lockedAppId} now={now} themeMode={themeMode} />)}
-                                </div>
-                            </section>
-                        )}
-
-                        {Array.from(new Set(releasedApps.map(a => a.category))).map(cat => (
-                            <section key={cat}>
-                                <h3 className={`text-xl font-bold mb-4 ${colors.text} border-b ${colors.border} pb-2`}>{cat}</h3>
-                                <div className="space-y-1">
-                                    {releasedApps.filter(a => a.category === cat).map(app => <AppListItem key={app.id} app={app} onClick={() => handleAppClick(app)} isAdmin={isAdmin} onEdit={onEdit} lockedAppId={lockedAppId} now={now} themeMode={themeMode} />)}
-                                </div>
-                            </section>
-                        ))}
-                    </div>
-
-                    {isAdmin && (
-                        <div className="fixed bottom-32 right-5 flex flex-col gap-3 z-30">
-                            <button onClick={() => setShowScheduled(true)} className={`w-12 h-12 ${colors.input} backdrop-blur rounded-full flex items-center justify-center ${colors.text} shadow-lg border ${colors.border} active:scale-90 transition-transform`}><Icon name="Clock" size={20} /></button>
-                            <button onClick={() => { setEditingApp(null); setShowAdminModal(true); }} className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-white shadow-lg shadow-blue-900/30 active:scale-90 transition-transform"><Icon name="Plus" size={24} /></button>
-                        </div>
-                    )}
-                </div>
-            );
-        }
-
-        // --- App Details Modal ---
-        function AppDetail({ app, onClose, themeMode }) {
-            const now = Date.now();
-            const colors = THEMES[themeMode] || THEMES.amoled;
-            const isPreOrder = app.scheduledAt && now < app.scheduledAt;
-            const [showWarning, setShowWarning] = useState(!!app.hasWarning);
-            const isEffectiveLocked = app.isLocked && (!app.unlockSurpriseAt && (!app.scheduledAt || now < app.scheduledAt));
-
-            const handleDownload = () => { if (isPreOrder) return; if (app.downloadUrl) window.open(app.downloadUrl, '_blank'); else alert("Link indisponível."); };
-            
-            const handleShare = async () => {
-                const shareData = {
-                    title: app.name,
-                    text: `Confira ${app.name} na Nexus Store!`,
-                    url: app.downloadUrl || window.location.href
-                };
-
-                if (navigator.share) {
-                    try { await navigator.share(shareData); } catch (err) { console.log('Error sharing:', err); }
-                } else {
-                    const shareText = `Baixe ${app.name} na Nexus Store! ${app.downloadUrl || ''}`;
-                    const textArea = document.createElement("textarea");
-                    textArea.value = shareText;
-                    document.body.appendChild(textArea);
-                    textArea.select();
-                    try { document.execCommand('copy'); alert('Link copiado!'); } catch (err) {}
-                    document.body.removeChild(textArea);
-                }
-            };
-
-            const displayApp = isEffectiveLocked ? { ...app, name: "???", developer: "???", description: "Conteúdo confidencial. Aguarde a revelação.", icon: null } : app;
-
-            return (
-                <div className={`fixed inset-0 z-50 ${colors.bg} ${colors.text} animate-slide-up flex flex-col overflow-y-auto`}>
-                    {showWarning && (
-                        <div className="absolute inset-0 z-[60] bg-black/60 backdrop-blur-md flex items-center justify-center p-8 animate-fade-in">
-                            <div className={`${colors.card} p-6 rounded-3xl w-full max-w-sm shadow-2xl text-center border ${colors.border}`}>
-                                <div className="w-12 h-12 bg-yellow-500/10 rounded-full flex items-center justify-center mx-auto mb-4"><Icon name="AlertTriangle" className="text-yellow-500" size={24} /></div>
-                                <h3 className="font-bold text-lg mb-2">Atenção</h3>
-                                <p className={`${colors.subtext} text-sm mb-6 leading-relaxed`}>{app.warningMessage}</p>
-                                <button onClick={() => setShowWarning(false)} className={`w-full py-3 ${themeMode === 'light' ? 'bg-black text-white' : 'bg-white text-black'} font-bold rounded-xl text-sm`}>Entendido</button>
-                            </div>
-                        </div>
-                    )}
-
-                    <div className={`sticky top-0 z-30 flex justify-between items-center p-4 ${colors.glass} backdrop-blur-xl`}>
-                        <button onClick={onClose} className="w-9 h-9 rounded-full bg-zinc-800/50 flex items-center justify-center text-blue-500 backdrop-blur-md"><Icon name="ChevronLeft" size={22} /></button>
-                    </div>
-
-                    <div className="px-5 pb-40 animate-scale-in">
-                        <div className="flex gap-5 mb-8">
-                            <div className={`w-28 h-28 shrink-0 rounded-[22%] shadow-2xl overflow-hidden ${isEffectiveLocked ? `${colors.card} flex items-center justify-center` : ''}`}>
-                                {isEffectiveLocked ? <span className={`text-4xl font-black ${colors.subtext}`}>?</span> : <img src={displayApp.icon} className="w-full h-full object-cover" />}
-                            </div>
-                            <div className="flex flex-col justify-center min-w-0">
-                                <h1 className="text-xl font-bold leading-tight mb-1">{displayApp.name}</h1>
-                                <p className={`${colors.subtext} text-xs font-medium mb-4 uppercase tracking-wide`}>{displayApp.developer}</p>
-                                <div className="flex items-center gap-3">
-                                    <button onClick={handleDownload} disabled={isPreOrder} className={`px-6 py-2 rounded-full font-bold text-xs uppercase tracking-wider transition-transform active:scale-95 flex items-center gap-2 ${isPreOrder ? 'bg-zinc-800 text-zinc-500' : 'bg-blue-600 text-white shadow-lg shadow-blue-900/30'}`}>
-                                        <Icon name="Download" size={14} />
-                                        {isPreOrder ? 'EM BREVE' : 'OBTER'}
-                                    </button>
-                                    <button onClick={handleShare} className={`w-9 h-9 rounded-full ${colors.input} flex items-center justify-center text-blue-500 active:scale-90 transition-transform`}><Icon name="Share" size={18} /></button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className={`flex justify-between border-b ${colors.border} pb-6 mb-6 overflow-x-auto`}>
-                            <div className={`px-4 text-center border-r ${colors.border} last:border-0 flex-1`}>
-                                <p className={`text-[10px] ${colors.subtext} font-bold uppercase mb-1`}>Classificação</p>
-                                <p className={`text-xl font-bold ${themeMode === 'light' ? 'text-black' : 'text-zinc-300'}`}>{displayApp.rating}</p>
-                                <p className={`text-[9px] ${colors.subtext}`}>Anos</p>
-                            </div>
-                            <div className={`px-4 text-center border-r ${colors.border} last:border-0 flex-1`}>
-                                <p className={`text-[10px] ${colors.subtext} font-bold uppercase mb-1`}>Categoria</p>
-                                <Icon name="Grid" size={20} className={`mx-auto ${colors.subtext} mb-0.5`} />
-                                <p className={`text-[9px] ${colors.subtext}`}>{displayApp.category}</p>
-                            </div>
-                            <div className="px-4 text-center flex-1">
-                                <p className={`text-[10px] ${colors.subtext} font-bold uppercase mb-1`}>Plataforma</p>
-                                <p className={`text-sm font-bold ${colors.subtext} mt-1`}>{displayApp.platform || 'Mobile'}</p>
-                            </div>
-                        </div>
-
-                        <div className="mb-8">
-                            <h2 className="text-lg font-bold mb-3">Novidades</h2>
-                            <div className={`flex justify-between ${colors.subtext} text-xs font-medium mb-3`}><span>Versão {displayApp.version}</span><span>{formatShortDate(now)}</span></div>
-                            <p className={`${colors.subtext} text-sm leading-relaxed opacity-90`}>{displayApp.updateNews || 'Melhorias de desempenho e correções de bugs.'}</p>
-                        </div>
-
-                        <div className="mb-8">
-                            <h2 className="text-lg font-bold mb-4">Pré-visualização</h2>
-                            <div className="flex gap-4 overflow-x-auto no-scrollbar snap-x -mx-5 px-5">
-                                {displayApp.screenshots?.map((s, i) => <img key={i} src={s} className={`h-[400px] w-auto rounded-[32px] snap-center shadow-lg ${colors.input} object-cover`} />)}
-                            </div>
-                        </div>
-
-                        <div className={`border-t ${colors.border} pt-6`}>
-                            <p className={`${colors.subtext} text-sm leading-relaxed whitespace-pre-wrap opacity-90`}>{displayApp.description}</p>
-                        </div>
-                        
-                        <div className={`mt-10 pt-10 border-t ${colors.border} mb-10`}>
-                            <div className="flex justify-between py-2 text-xs">
-                                <span className={colors.subtext}>Desenvolvedor</span>
-                                <span className={colors.text}>{displayApp.developer}</span>
-                            </div>
-                            <div className="flex justify-between py-2 text-xs">
-                                <span className={colors.subtext}>Categoria</span>
-                                <span className={colors.text}>{displayApp.category}</span>
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -1391,6 +1114,331 @@
             );
         }
 
+        // --- Core Views Definitions ---
+
+        function SearchView({ apps, onApp, onProfile, onNotifications, profileImage, themeMode }) {
+            const [query, setQuery] = useState('');
+            const [lockedAppId, setLockedAppId] = useState(null);
+            const now = Date.now();
+            const colors = THEMES[themeMode] || THEMES.amoled;
+            
+            const filtered = apps.filter(a => {
+                const isReleased = !a.scheduledAt || now >= a.scheduledAt;
+                const matches = a.name.toLowerCase().includes(query.toLowerCase());
+                return matches && (isReleased || a.isVisibleBeforeLaunch);
+            });
+
+            const handleAppClick = (app) => {
+                const unlockTime = app.unlockSurpriseAt || app.scheduledAt;
+                const isEffectiveLocked = app.isLocked && (!unlockTime || now < unlockTime);
+                if (isEffectiveLocked) { setLockedAppId(app.id); setTimeout(() => setLockedAppId(null), 1000); return; }
+                onApp(app);
+            };
+
+            return (
+                <div className={`animate-fade-in ${colors.bg} min-h-screen transition-colors duration-300`}>
+                    <header className={`pt-14 px-5 pb-4 flex justify-between items-end sticky top-0 z-20 border-b ${colors.border} backdrop-blur-xl ${colors.glass} transition-colors duration-300`}>
+                        <h1 className={`text-3xl font-extrabold tracking-tight ${colors.text}`}>Busca</h1>
+                        <div className="flex items-center gap-3">
+                            <button onClick={onNotifications} className={`w-9 h-9 rounded-full flex items-center justify-center ${colors.input} border ${colors.border} active:scale-95 transition-transform`}>
+                                <Icon name="Bell" size={18} className={colors.text} />
+                            </button>
+                            <button onClick={onProfile} className={`w-9 h-9 rounded-full overflow-hidden ${colors.input} border ${colors.border}`}>
+                                {profileImage ? <img src={profileImage} className="w-full h-full object-cover" /> : <Icon name="User" size={20} className={`text-zinc-500 m-auto mt-2`} />}
+                            </button>
+                        </div>
+                    </header>
+                    <div className="px-5 pt-2 pb-40">
+                        <div className="relative mb-6">
+                            <Icon name="Search" size={18} className="absolute left-3 top-3 text-zinc-500" />
+                            <input className={`w-full ${colors.input} ${colors.text} rounded-xl pl-10 pr-4 py-2.5 text-[15px] outline-none placeholder:text-zinc-500 font-medium transition-colors duration-300`} placeholder="Jogos, Apps, Histórias..." value={query} onChange={(e) => setQuery(e.target.value)} />
+                        </div>
+                        <div className="space-y-1">
+                            {filtered.length === 0 ? <p className={`text-center ${colors.subtext} mt-10 font-medium`}>Nenhum resultado.</p> : 
+                                filtered.map(app => <AppListItem key={app.id} app={app} onClick={() => handleAppClick(app)} lockedAppId={lockedAppId} now={now} themeMode={themeMode} />)
+                            }
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function GenericTabView({ title, apps, onApp, isAdmin, onEdit, themeMode }) {
+            const now = Date.now();
+            const colors = THEMES[themeMode] || THEMES.amoled;
+            const visibleApps = apps.filter(a => (!a.scheduledAt || now >= a.scheduledAt) || a.isVisibleBeforeLaunch);
+            const [lockedAppId, setLockedAppId] = useState(null);
+
+            const handleAppClick = (app) => {
+                const unlockTime = app.unlockSurpriseAt || app.scheduledAt;
+                const isEffectiveLocked = app.isLocked && (!unlockTime || now < unlockTime);
+                if (isEffectiveLocked) { setLockedAppId(app.id); setTimeout(() => setLockedAppId(null), 1000); return; }
+                onApp(app);
+            };
+
+            return (
+                <div className={`animate-fade-in ${colors.bg} min-h-screen transition-colors duration-300`}>
+                    <header className={`pt-14 px-5 pb-6 sticky top-0 z-20 border-b ${colors.border} backdrop-blur-xl ${colors.glass} transition-colors duration-300`}>
+                        <h1 className={`text-3xl font-extrabold tracking-tight ${colors.text}`}>{title}</h1>
+                    </header>
+                    <div className="px-5 pt-2 pb-40 space-y-1">
+                        {visibleApps.map(app => <AppListItem key={app.id} app={app} onClick={() => handleAppClick(app)} isAdmin={isAdmin} onEdit={onEdit} lockedAppId={lockedAppId} now={now} themeMode={themeMode} />)}
+                        {visibleApps.length === 0 && <div className={`text-center ${colors.subtext} mt-20`}>Vazio</div>}
+                    </div>
+                </div>
+            );
+        }
+
+        function TodayView({ apps, highlights, onProfile, onNotifications, onApp, isAdmin, onEdit, profileImage, themeMode, setShowScheduled, setEditingApp, setShowAdminModal }) {
+            const now = Date.now();
+            const colors = THEMES[themeMode] || THEMES.amoled;
+            const [lockedAppId, setLockedAppId] = useState(null);
+            
+            // Filter highlights
+            const filteredHighlights = highlights.filter(h => {
+                if(h.isHidden) return false;
+                const isLive = !h.scheduledAt || now >= h.scheduledAt;
+                const isPaused = h.removedAt && now >= h.removedAt && (!h.reactivatedAt || now < h.reactivatedAt);
+                if(!isLive || isPaused) return false;
+                if(h.recurringDays?.length > 0) {
+                    if(!h.recurringDays.includes(new Date().getDay())) return false;
+                }
+                return true;
+            });
+
+            // Apps logic
+            const comingSoonApps = apps.filter(a => a.scheduledAt && now < a.scheduledAt && a.isVisibleBeforeLaunch).sort((a,b) => a.scheduledAt - b.scheduledAt).slice(0, 3);
+            const releasedApps = apps.filter(a => !a.scheduledAt || now >= a.scheduledAt);
+
+            const handleAppClick = (app) => {
+                const unlockTime = app.unlockSurpriseAt || app.scheduledAt;
+                const isEffectiveLocked = app.isLocked && (!unlockTime || now < unlockTime);
+                if (isEffectiveLocked) { setLockedAppId(app.id); setTimeout(() => setLockedAppId(null), 1000); return; }
+                onApp(app);
+            };
+
+            return (
+                <div className={`animate-fade-in ${colors.bg} min-h-screen pb-40 transition-colors duration-300 relative`}>
+                    <header className={`pt-14 px-5 pb-4 flex justify-between items-center sticky top-0 z-20 backdrop-blur-xl ${colors.glass} transition-colors duration-300`}>
+                        <div>
+                            <p className={`text-[11px] font-bold ${colors.subtext} uppercase tracking-wide mb-0.5`}>{new Date().toLocaleDateString('pt-PT', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+                            <h1 className={`text-3xl font-extrabold tracking-tight ${colors.text}`}>Hoje</h1>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <button onClick={onNotifications} className={`w-9 h-9 rounded-full flex items-center justify-center ${colors.input} border ${colors.border} active:scale-95 transition-transform`}>
+                                <Icon name="Bell" size={18} className={colors.text} />
+                            </button>
+                            <button onClick={onProfile} className={`w-9 h-9 rounded-full overflow-hidden ${colors.input} border ${colors.border} shadow-sm active:scale-95 transition-transform`}>
+                                {profileImage ? <img src={profileImage} className="w-full h-full object-cover" /> : <Icon name="User" size={20} className="text-zinc-500 m-auto mt-2" />}
+                            </button>
+                        </div>
+                    </header>
+
+                    <div className="space-y-10 px-5 pt-2">
+                        <div className="flex overflow-x-auto gap-4 no-scrollbar -mx-5 px-5 snap-x snap-mandatory">
+                            {filteredHighlights.map(h => (
+                                <div key={h.id} className={`snap-center shrink-0 w-[85vw] max-w-[340px] aspect-[4/5] overflow-hidden relative shadow-ios cursor-pointer active:scale-98 transition-transform ${h.type === 'mosaic' ? 'bg-transparent shadow-none' : `${colors.card} rounded-[32px]`}`} onClick={() => h.type !== 'mosaic' && h.appId && onApp(apps.find(a => a.id === h.appId))}>
+                                    
+                                    {h.type === 'mosaic' ? (
+                                        <div className="flex flex-col gap-2 h-full">
+                                            {/* Mosaic Top */}
+                                            <div className="w-full h-[55%] rounded-[24px] overflow-hidden relative shadow-lg" onClick={(e) => { e.stopPropagation(); h.items && h.items[0].appId && onApp(apps.find(a => a.id === h.items[0].appId)) }}>
+                                                <img src={h.items[0].image} className="w-full h-full object-cover" />
+                                                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent p-4 flex flex-col justify-end">
+                                                    <p className="text-[9px] font-bold text-zinc-300 uppercase tracking-widest shadow-black drop-shadow-md">{h.items[0].subtitle}</p>
+                                                    <h3 className="text-xl font-extrabold text-white uppercase leading-none drop-shadow-lg">{h.items[0].title}</h3>
+                                                </div>
+                                            </div>
+                                            {/* Mosaic Bottom Row */}
+                                            <div className="flex gap-2 w-full h-[45%]">
+                                                {[1, 2].map(idx => (
+                                                    <div key={idx} className="flex-1 rounded-[24px] overflow-hidden relative shadow-lg" onClick={(e) => { e.stopPropagation(); h.items && h.items[idx].appId && onApp(apps.find(a => a.id === h.items[idx].appId)) }}>
+                                                        <img src={h.items[idx].image} className="w-full h-full object-cover" />
+                                                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent p-3 flex flex-col justify-end">
+                                                            <p className="text-[8px] font-bold text-zinc-300 uppercase tracking-widest shadow-black drop-shadow-md">{h.items[idx].subtitle}</p>
+                                                            <h4 className="text-sm font-extrabold text-white uppercase leading-none drop-shadow-lg">{h.items[idx].title}</h4>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <VideoPlayer url={h.videoUrl} image={h.image} />
+                                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent p-8 flex flex-col justify-end">
+                                                <p className="text-[10px] font-bold text-zinc-300 uppercase tracking-widest mb-2 shadow-black drop-shadow-md">{h.subtitle}</p>
+                                                <h2 className="text-4xl font-extrabold text-white uppercase leading-none drop-shadow-lg tracking-tight">{h.title}</h2>
+                                            </div>
+                                        </>
+                                    )}
+                                    
+                                </div>
+                            ))}
+                        </div>
+
+                        {comingSoonApps.length > 0 && (
+                            <section>
+                                <div className={`flex items-center justify-between mb-4 border-b ${colors.border} pb-2`}>
+                                    <h3 className="text-xl font-bold text-blue-500">Em Breve</h3>
+                                </div>
+                                <div className="space-y-1">
+                                    {comingSoonApps.map(app => <AppListItem key={app.id} app={app} onClick={() => handleAppClick(app)} isAdmin={isAdmin} onEdit={onEdit} lockedAppId={lockedAppId} now={now} themeMode={themeMode} />)}
+                                </div>
+                            </section>
+                        )}
+
+                        {Array.from(new Set(releasedApps.map(a => a.category))).map(cat => (
+                            <section key={cat}>
+                                <h3 className={`text-xl font-bold mb-4 ${colors.text} border-b ${colors.border} pb-2`}>{cat}</h3>
+                                <div className="space-y-1">
+                                    {releasedApps.filter(a => a.category === cat).map(app => <AppListItem key={app.id} app={app} onClick={() => handleAppClick(app)} isAdmin={isAdmin} onEdit={onEdit} lockedAppId={lockedAppId} now={now} themeMode={themeMode} />)}
+                                </div>
+                            </section>
+                        ))}
+                    </div>
+
+                    {isAdmin && (
+                        <div className="fixed bottom-32 right-5 flex flex-col gap-3 z-30">
+                            <button onClick={() => setShowScheduled(true)} className={`w-12 h-12 ${colors.input} backdrop-blur rounded-full flex items-center justify-center ${colors.text} shadow-lg border ${colors.border} active:scale-90 transition-transform`}><Icon name="Clock" size={20} /></button>
+                            <button onClick={() => { setEditingApp(null); setShowAdminModal(true); }} className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-white shadow-lg shadow-blue-900/30 active:scale-90 transition-transform"><Icon name="Plus" size={24} /></button>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        // --- App Details Modal Definition (Placed before usage) ---
+
+        function AppDetail({ app, onClose, themeMode }) {
+            const now = Date.now();
+            const colors = THEMES[themeMode] || THEMES.amoled;
+            const isPreOrder = app.scheduledAt && now < app.scheduledAt;
+            const [showWarning, setShowWarning] = useState(!!app.hasWarning);
+            const isEffectiveLocked = app.isLocked && (!app.unlockSurpriseAt && (!app.scheduledAt || now < app.scheduledAt));
+
+            const handleDownload = () => { 
+                if (isPreOrder) return;
+                
+                if (app.downloadUrl) {
+                    // Force download in external browser for WebViews/APKs
+                    const link = document.createElement('a');
+                    link.href = app.downloadUrl;
+                    link.target = '_blank'; // Forces external browser usually
+                    link.download = app.name || 'download';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                } else {
+                    alert("Link indisponível.");
+                }
+            };
+            
+            const handleShare = async () => {
+                const shareData = {
+                    title: app.name,
+                    text: `Confira ${app.name} na Nexus Store!`,
+                    url: app.downloadUrl || window.location.href
+                };
+
+                if (navigator.share) {
+                    try { await navigator.share(shareData); } catch (err) { console.log('Error sharing:', err); }
+                } else {
+                    const shareText = `Baixe ${app.name} na Nexus Store! ${app.downloadUrl || ''}`;
+                    const textArea = document.createElement("textarea");
+                    textArea.value = shareText;
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    try { document.execCommand('copy'); alert('Link copiado!'); } catch (err) {}
+                    document.body.removeChild(textArea);
+                }
+            };
+
+            const displayApp = isEffectiveLocked ? { ...app, name: "???", developer: "???", description: "Conteúdo confidencial. Aguarde a revelação.", icon: null } : app;
+
+            return (
+                <div className={`fixed inset-0 z-50 ${colors.bg} ${colors.text} animate-slide-up flex flex-col overflow-y-auto`}>
+                    {showWarning && (
+                        <div className="absolute inset-0 z-[60] bg-black/60 backdrop-blur-md flex items-center justify-center p-8 animate-fade-in">
+                            <div className={`${colors.card} p-6 rounded-3xl w-full max-w-sm shadow-2xl text-center border ${colors.border}`}>
+                                <div className="w-12 h-12 bg-yellow-500/10 rounded-full flex items-center justify-center mx-auto mb-4"><Icon name="AlertTriangle" className="text-yellow-500" size={24} /></div>
+                                <h3 className="font-bold text-lg mb-2">Atenção</h3>
+                                <p className={`${colors.subtext} text-sm mb-6 leading-relaxed`}>{app.warningMessage}</p>
+                                <button onClick={() => setShowWarning(false)} className={`w-full py-3 ${themeMode === 'light' ? 'bg-black text-white' : 'bg-white text-black'} font-bold rounded-xl text-sm`}>Entendido</button>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className={`sticky top-0 z-30 flex justify-between items-center p-4 ${colors.glass} backdrop-blur-xl`}>
+                        <button onClick={onClose} className="w-9 h-9 rounded-full bg-zinc-800/50 flex items-center justify-center text-blue-500 backdrop-blur-md"><Icon name="ChevronLeft" size={22} /></button>
+                    </div>
+
+                    <div className="px-5 pb-40 animate-scale-in">
+                        <div className="flex gap-5 mb-8">
+                            <div className={`w-28 h-28 shrink-0 rounded-[22%] shadow-2xl overflow-hidden ${isEffectiveLocked ? `${colors.card} flex items-center justify-center` : ''}`}>
+                                {isEffectiveLocked ? <span className={`text-4xl font-black ${colors.subtext}`}>?</span> : <img src={displayApp.icon} className="w-full h-full object-cover" />}
+                            </div>
+                            <div className="flex flex-col justify-center min-w-0">
+                                <h1 className="text-xl font-bold leading-tight mb-1">{displayApp.name}</h1>
+                                <p className={`${colors.subtext} text-xs font-medium mb-4 uppercase tracking-wide`}>{displayApp.developer}</p>
+                                <div className="flex items-center gap-3">
+                                    <button onClick={handleDownload} disabled={isPreOrder} className={`px-6 py-2 rounded-full font-bold text-xs uppercase tracking-wider transition-transform active:scale-95 flex items-center gap-2 ${isPreOrder ? 'bg-zinc-800 text-zinc-500' : 'bg-blue-600 text-white shadow-lg shadow-blue-900/30'}`}>
+                                        <Icon name="Download" size={14} />
+                                        {isPreOrder ? 'EM BREVE' : 'OBTER'}
+                                    </button>
+                                    <button onClick={handleShare} className={`w-9 h-9 rounded-full ${colors.input} flex items-center justify-center text-blue-500 active:scale-90 transition-transform`}><Icon name="Share" size={18} /></button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className={`flex justify-between border-b ${colors.border} pb-6 mb-6 overflow-x-auto`}>
+                            <div className={`px-4 text-center border-r ${colors.border} last:border-0 flex-1`}>
+                                <p className={`text-[10px] ${colors.subtext} font-bold uppercase mb-1`}>Classificação</p>
+                                <p className={`text-xl font-bold ${themeMode === 'light' ? 'text-black' : 'text-zinc-300'}`}>{displayApp.rating}</p>
+                                <p className={`text-[9px] ${colors.subtext}`}>Anos</p>
+                            </div>
+                            <div className={`px-4 text-center border-r ${colors.border} last:border-0 flex-1`}>
+                                <p className={`text-[10px] ${colors.subtext} font-bold uppercase mb-1`}>Categoria</p>
+                                <Icon name="Grid" size={20} className={`mx-auto ${colors.subtext} mb-0.5`} />
+                                <p className={`text-[9px] ${colors.subtext}`}>{displayApp.category}</p>
+                            </div>
+                            <div className="px-4 text-center flex-1">
+                                <p className={`text-[10px] ${colors.subtext} font-bold uppercase mb-1`}>Plataforma</p>
+                                <p className={`text-sm font-bold ${colors.subtext} mt-1`}>{displayApp.platform || 'Mobile'}</p>
+                            </div>
+                        </div>
+
+                        <div className="mb-8">
+                            <h2 className="text-lg font-bold mb-3">Novidades</h2>
+                            <div className={`flex justify-between ${colors.subtext} text-xs font-medium mb-3`}><span>Versão {displayApp.version}</span><span>{formatShortDate(now)}</span></div>
+                            <p className={`${colors.subtext} text-sm leading-relaxed opacity-90`}>{displayApp.updateNews || 'Melhorias de desempenho e correções de bugs.'}</p>
+                        </div>
+
+                        <div className="mb-8">
+                            <h2 className="text-lg font-bold mb-4">Pré-visualização</h2>
+                            <div className="flex gap-4 overflow-x-auto no-scrollbar snap-x -mx-5 px-5">
+                                {displayApp.screenshots?.map((s, i) => <img key={i} src={s} className={`h-[400px] w-auto rounded-[32px] snap-center shadow-lg ${colors.input} object-cover`} />)}
+                            </div>
+                        </div>
+
+                        <div className={`border-t ${colors.border} pt-6`}>
+                            <p className={`${colors.subtext} text-sm leading-relaxed whitespace-pre-wrap opacity-90`}>{displayApp.description}</p>
+                        </div>
+                        
+                        <div className={`mt-10 pt-10 border-t ${colors.border} mb-10`}>
+                            <div className="flex justify-between py-2 text-xs">
+                                <span className={colors.subtext}>Desenvolvedor</span>
+                                <span className={colors.text}>{displayApp.developer}</span>
+                            </div>
+                            <div className="flex justify-between py-2 text-xs">
+                                <span className={colors.subtext}>Categoria</span>
+                                <span className={colors.text}>{displayApp.category}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
         // --- Main App ---
         function App() {
             const [view, setView] = useState('loading');
@@ -1410,12 +1458,20 @@
             const [showScheduled, setShowScheduled] = useState(false);
             const [showNotifications, setShowNotifications] = useState(false);
             const [isMaintenance, setIsMaintenance] = useState(false);
+            const [toast, setToast] = useState(null); // Toast state
             
             // Refs for tracking changes
             const prevAppsRef = useRef([]);
             const isFirstLoad = useRef(true);
 
             const colors = THEMES[theme] || THEMES.amoled;
+
+            // In-App Notification Listener
+            useEffect(() => {
+                const handleToast = (e) => setToast(e.detail);
+                window.addEventListener('nexus-toast', handleToast);
+                return () => window.removeEventListener('nexus-toast', handleToast);
+            }, []);
 
             const setAdminState = (status) => { 
                 setIsAdmin(status); 
@@ -1510,6 +1566,10 @@
 
             return (
                 <div className={`h-screen w-full ${colors.bg} overflow-hidden flex flex-col font-sans transition-colors duration-300`}>
+                    
+                    {/* Toast Notification Render */}
+                    {toast && <Toast title={toast.title} body={toast.body} icon={toast.icon} themeMode={theme} onClose={() => setToast(null)} />}
+
                     <div className="flex-1 overflow-y-auto pb-40 no-scrollbar">
                         {activeTab === 'today' && <TodayView apps={apps} highlights={highlights} onProfile={() => setShowProfile(true)} onNotifications={() => setShowNotifications(true)} onApp={setSelectedApp} isAdmin={isAdmin} onEdit={(a) => { setEditingApp(a); setShowAdminModal(true); }} profileImage={profileImage} themeMode={theme} setShowScheduled={setShowScheduled} setEditingApp={setEditingApp} setShowAdminModal={setShowAdminModal} />}
                         {activeTab === 'games' && <GenericTabView title="Jogos" apps={apps.filter(a => a.category === 'Jogos')} onApp={setSelectedApp} isAdmin={isAdmin} onEdit={(a) => { setEditingApp(a); setShowAdminModal(true); }} themeMode={theme} />}
