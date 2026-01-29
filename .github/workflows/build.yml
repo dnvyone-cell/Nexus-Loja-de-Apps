@@ -17,29 +17,29 @@ jobs:
           
       - run: npm install -g cordova
       
-      - name: Create and Configure Project
+      - name: Create Project
         run: |
           cordova create app com.nexus.store "Nexus Store"
           cp config.xml app/
           rm app/www/index.html
           cp index.html app/www/
-          # Copia chaves e configuracao
+          # Copia as chaves para a raiz do projeto Cordova
           cp build.json app/
           cp nexus.keystore app/
 
       - working-directory: ./app
         run: cordova platform add android
         
-      - name: Build and Sign
+      - name: Build APK
         working-directory: ./app
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          # O flag --buildConfig forca o uso da sua chave
-          cordova build android --release --buildConfig=build.json
+          # Força gerar APK (e não AAB) e usa sua configuração de chave
+          cordova build android --release --buildConfig=build.json -- --packageType=apk
           
-      - name: Upload Artifact
+      - name: Upload ANY APK Found
         uses: actions/upload-artifact@v4
         with:
           name: nexus-store-apk
-          # O asterisco (*) pega QUALQUER apk gerado na pasta release
-          path: app/platforms/android/app/build/outputs/apk/release/*.apk
+          # Os asteriscos duplos (**) significam: procure em qualquer subpasta
+          path: **/*.apk
