@@ -115,7 +115,7 @@
         const { useState, useEffect, useMemo, useRef } = React;
 
         // VERSÃO ATUAL DO SEU APP
-        const APP_VERSION = "2.9"; 
+        const APP_VERSION = "3.0"; 
 
         const firebaseConfig = {
             apiKey: "AIzaSyDcWSyP6S7LDuGQ1ZjFqKAHCZ8mjwJhEKY",
@@ -837,6 +837,137 @@
             );
         }
 
+        // --- App Details Modal Definition (Placed before usage) ---
+
+        function AppDetail({ app, onClose, themeMode }) {
+            const now = Date.now();
+            const colors = THEMES[themeMode] || THEMES.amoled;
+            const isPreOrder = app.scheduledAt && now < app.scheduledAt;
+            const [showWarning, setShowWarning] = useState(!!app.hasWarning);
+            const isEffectiveLocked = app.isLocked && (!app.unlockSurpriseAt && (!app.scheduledAt || now < app.scheduledAt));
+
+            const handleDownload = () => { 
+                if (isPreOrder) return;
+                if (!app.downloadUrl) return alert("Link indisponível.");
+
+                // Força a abertura no navegador do sistema (híbrido para APK/Web)
+                const url = app.downloadUrl;
+                
+                // Tenta abrir direto
+                const win = window.open(url, '_blank');
+                
+                // Se falhar (null), tenta redirecionar a janela atual
+                if (!win) {
+                    window.location.href = url;
+                }
+            };
+            
+            const handleShare = async () => {
+                const shareData = {
+                    title: app.name,
+                    text: `Confira ${app.name} na Nexus Store!`,
+                    url: app.downloadUrl || window.location.href
+                };
+
+                if (navigator.share) {
+                    try { await navigator.share(shareData); } catch (err) { console.log('Error sharing:', err); }
+                } else {
+                    const shareText = `Baixe ${app.name} na Nexus Store! ${app.downloadUrl || ''}`;
+                    const textArea = document.createElement("textarea");
+                    textArea.value = shareText;
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    try { document.execCommand('copy'); alert('Link copiado!'); } catch (err) {}
+                    document.body.removeChild(textArea);
+                }
+            };
+
+            const displayApp = isEffectiveLocked ? { ...app, name: "???", developer: "???", description: "Conteúdo confidencial. Aguarde a revelação.", icon: null } : app;
+
+            return (
+                <div className={`fixed inset-0 z-50 ${colors.bg} ${colors.text} animate-slide-up flex flex-col overflow-y-auto`}>
+                    {showWarning && (
+                        <div className="absolute inset-0 z-[60] bg-black/60 backdrop-blur-md flex items-center justify-center p-8 animate-fade-in">
+                            <div className={`${colors.card} p-6 rounded-3xl w-full max-w-sm shadow-2xl text-center border ${colors.border}`}>
+                                <div className="w-12 h-12 bg-yellow-500/10 rounded-full flex items-center justify-center mx-auto mb-4"><Icon name="AlertTriangle" className="text-yellow-500" size={24} /></div>
+                                <h3 className="font-bold text-lg mb-2">Atenção</h3>
+                                <p className={`${colors.subtext} text-sm mb-6 leading-relaxed`}>{app.warningMessage}</p>
+                                <button onClick={() => setShowWarning(false)} className={`w-full py-3 ${themeMode === 'light' ? 'bg-black text-white' : 'bg-white text-black'} font-bold rounded-xl text-sm`}>Entendido</button>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className={`sticky top-0 z-30 flex justify-between items-center p-4 ${colors.glass} backdrop-blur-xl`}>
+                        <button onClick={onClose} className="w-9 h-9 rounded-full bg-zinc-800/50 flex items-center justify-center text-blue-500 backdrop-blur-md"><Icon name="ChevronLeft" size={22} /></button>
+                    </div>
+
+                    <div className="px-5 pb-40 animate-scale-in">
+                        <div className="flex gap-5 mb-8">
+                            <div className={`w-28 h-28 shrink-0 rounded-[22%] shadow-2xl overflow-hidden ${isEffectiveLocked ? `${colors.card} flex items-center justify-center` : ''}`}>
+                                {isEffectiveLocked ? <span className={`text-4xl font-black ${colors.subtext}`}>?</span> : <img src={displayApp.icon} className="w-full h-full object-cover" />}
+                            </div>
+                            <div className="flex flex-col justify-center min-w-0">
+                                <h1 className="text-xl font-bold leading-tight mb-1">{displayApp.name}</h1>
+                                <p className={`${colors.subtext} text-xs font-medium mb-4 uppercase tracking-wide`}>{displayApp.developer}</p>
+                                <div className="flex items-center gap-3">
+                                    <button onClick={handleDownload} disabled={isPreOrder} className={`px-6 py-2 rounded-full font-bold text-xs uppercase tracking-wider transition-transform active:scale-95 flex items-center gap-2 ${isPreOrder ? 'bg-zinc-800 text-zinc-500' : 'bg-blue-600 text-white shadow-lg shadow-blue-900/30'}`}>
+                                        <Icon name="Download" size={14} />
+                                        {isPreOrder ? 'EM BREVE' : 'OBTER'}
+                                    </button>
+                                    <button onClick={handleShare} className={`w-9 h-9 rounded-full ${colors.input} flex items-center justify-center text-blue-500 active:scale-90 transition-transform`}><Icon name="Share" size={18} /></button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className={`flex justify-between border-b ${colors.border} pb-6 mb-6 overflow-x-auto`}>
+                            <div className={`px-4 text-center border-r ${colors.border} last:border-0 flex-1`}>
+                                <p className={`text-[10px] ${colors.subtext} font-bold uppercase mb-1`}>Classificação</p>
+                                <p className={`text-xl font-bold ${themeMode === 'light' ? 'text-black' : 'text-zinc-300'}`}>{displayApp.rating}</p>
+                                <p className={`text-[9px] ${colors.subtext}`}>Anos</p>
+                            </div>
+                            <div className={`px-4 text-center border-r ${colors.border} last:border-0 flex-1`}>
+                                <p className={`text-[10px] ${colors.subtext} font-bold uppercase mb-1`}>Categoria</p>
+                                <Icon name="Grid" size={20} className={`mx-auto ${colors.subtext} mb-0.5`} />
+                                <p className={`text-[9px] ${colors.subtext}`}>{displayApp.category}</p>
+                            </div>
+                            <div className="px-4 text-center flex-1">
+                                <p className={`text-[10px] ${colors.subtext} font-bold uppercase mb-1`}>Plataforma</p>
+                                <p className={`text-sm font-bold ${colors.subtext} mt-1`}>{displayApp.platform || 'Mobile'}</p>
+                            </div>
+                        </div>
+
+                        <div className="mb-8">
+                            <h2 className="text-lg font-bold mb-3">Novidades</h2>
+                            <div className={`flex justify-between ${colors.subtext} text-xs font-medium mb-3`}><span>Versão {displayApp.version}</span><span>{formatShortDate(now)}</span></div>
+                            <p className={`${colors.subtext} text-sm leading-relaxed opacity-90`}>{displayApp.updateNews || 'Melhorias de desempenho e correções de bugs.'}</p>
+                        </div>
+
+                        <div className="mb-8">
+                            <h2 className="text-lg font-bold mb-4">Pré-visualização</h2>
+                            <div className="flex gap-4 overflow-x-auto no-scrollbar snap-x -mx-5 px-5">
+                                {displayApp.screenshots?.map((s, i) => <img key={i} src={s} className={`h-[400px] w-auto rounded-[32px] snap-center shadow-lg ${colors.input} object-cover`} />)}
+                            </div>
+                        </div>
+
+                        <div className={`border-t ${colors.border} pt-6`}>
+                            <p className={`${colors.subtext} text-sm leading-relaxed whitespace-pre-wrap opacity-90`}>{displayApp.description}</p>
+                        </div>
+                        
+                        <div className={`mt-10 pt-10 border-t ${colors.border} mb-10`}>
+                            <div className="flex justify-between py-2 text-xs">
+                                <span className={colors.subtext}>Desenvolvedor</span>
+                                <span className={colors.text}>{displayApp.developer}</span>
+                            </div>
+                            <div className="flex justify-between py-2 text-xs">
+                                <span className={colors.subtext}>Categoria</span>
+                                <span className={colors.text}>{displayApp.category}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
         function ProfileModal({ isAdmin, setAdmin, highlights, onAddHigh, onEditHigh, onClose, profileImage, onImageUpload, theme, setTheme }) {
             const [userLogin, setUserLogin] = useState('');
             const [passLogin, setPassLogin] = useState('');
@@ -1303,138 +1434,6 @@
                             <button onClick={() => { setEditingApp(null); setShowAdminModal(true); }} className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-white shadow-lg shadow-blue-900/30 active:scale-90 transition-transform"><Icon name="Plus" size={24} /></button>
                         </div>
                     )}
-                </div>
-            );
-        }
-
-        // --- App Details Modal Definition (Placed before usage) ---
-
-        function AppDetail({ app, onClose, themeMode }) {
-            const now = Date.now();
-            const colors = THEMES[themeMode] || THEMES.amoled;
-            const isPreOrder = app.scheduledAt && now < app.scheduledAt;
-            const [showWarning, setShowWarning] = useState(!!app.hasWarning);
-            const isEffectiveLocked = app.isLocked && (!app.unlockSurpriseAt && (!app.scheduledAt || now < app.scheduledAt));
-
-            const handleDownload = () => { 
-                if (isPreOrder) return;
-                
-                if (app.downloadUrl) {
-                    // Force download in external browser for WebViews/APKs
-                    const link = document.createElement('a');
-                    link.href = app.downloadUrl;
-                    link.target = '_blank'; // Forces external browser usually
-                    link.download = app.name || 'download';
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                } else {
-                    alert("Link indisponível.");
-                }
-            };
-            
-            const handleShare = async () => {
-                const shareData = {
-                    title: app.name,
-                    text: `Confira ${app.name} na Nexus Store!`,
-                    url: app.downloadUrl || window.location.href
-                };
-
-                if (navigator.share) {
-                    try { await navigator.share(shareData); } catch (err) { console.log('Error sharing:', err); }
-                } else {
-                    const shareText = `Baixe ${app.name} na Nexus Store! ${app.downloadUrl || ''}`;
-                    const textArea = document.createElement("textarea");
-                    textArea.value = shareText;
-                    document.body.appendChild(textArea);
-                    textArea.select();
-                    try { document.execCommand('copy'); alert('Link copiado!'); } catch (err) {}
-                    document.body.removeChild(textArea);
-                }
-            };
-
-            const displayApp = isEffectiveLocked ? { ...app, name: "???", developer: "???", description: "Conteúdo confidencial. Aguarde a revelação.", icon: null } : app;
-
-            return (
-                <div className={`fixed inset-0 z-50 ${colors.bg} ${colors.text} animate-slide-up flex flex-col overflow-y-auto`}>
-                    {showWarning && (
-                        <div className="absolute inset-0 z-[60] bg-black/60 backdrop-blur-md flex items-center justify-center p-8 animate-fade-in">
-                            <div className={`${colors.card} p-6 rounded-3xl w-full max-w-sm shadow-2xl text-center border ${colors.border}`}>
-                                <div className="w-12 h-12 bg-yellow-500/10 rounded-full flex items-center justify-center mx-auto mb-4"><Icon name="AlertTriangle" className="text-yellow-500" size={24} /></div>
-                                <h3 className="font-bold text-lg mb-2">Atenção</h3>
-                                <p className={`${colors.subtext} text-sm mb-6 leading-relaxed`}>{app.warningMessage}</p>
-                                <button onClick={() => setShowWarning(false)} className={`w-full py-3 ${themeMode === 'light' ? 'bg-black text-white' : 'bg-white text-black'} font-bold rounded-xl text-sm`}>Entendido</button>
-                            </div>
-                        </div>
-                    )}
-
-                    <div className={`sticky top-0 z-30 flex justify-between items-center p-4 ${colors.glass} backdrop-blur-xl`}>
-                        <button onClick={onClose} className="w-9 h-9 rounded-full bg-zinc-800/50 flex items-center justify-center text-blue-500 backdrop-blur-md"><Icon name="ChevronLeft" size={22} /></button>
-                    </div>
-
-                    <div className="px-5 pb-40 animate-scale-in">
-                        <div className="flex gap-5 mb-8">
-                            <div className={`w-28 h-28 shrink-0 rounded-[22%] shadow-2xl overflow-hidden ${isEffectiveLocked ? `${colors.card} flex items-center justify-center` : ''}`}>
-                                {isEffectiveLocked ? <span className={`text-4xl font-black ${colors.subtext}`}>?</span> : <img src={displayApp.icon} className="w-full h-full object-cover" />}
-                            </div>
-                            <div className="flex flex-col justify-center min-w-0">
-                                <h1 className="text-xl font-bold leading-tight mb-1">{displayApp.name}</h1>
-                                <p className={`${colors.subtext} text-xs font-medium mb-4 uppercase tracking-wide`}>{displayApp.developer}</p>
-                                <div className="flex items-center gap-3">
-                                    <button onClick={handleDownload} disabled={isPreOrder} className={`px-6 py-2 rounded-full font-bold text-xs uppercase tracking-wider transition-transform active:scale-95 flex items-center gap-2 ${isPreOrder ? 'bg-zinc-800 text-zinc-500' : 'bg-blue-600 text-white shadow-lg shadow-blue-900/30'}`}>
-                                        <Icon name="Download" size={14} />
-                                        {isPreOrder ? 'EM BREVE' : 'OBTER'}
-                                    </button>
-                                    <button onClick={handleShare} className={`w-9 h-9 rounded-full ${colors.input} flex items-center justify-center text-blue-500 active:scale-90 transition-transform`}><Icon name="Share" size={18} /></button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className={`flex justify-between border-b ${colors.border} pb-6 mb-6 overflow-x-auto`}>
-                            <div className={`px-4 text-center border-r ${colors.border} last:border-0 flex-1`}>
-                                <p className={`text-[10px] ${colors.subtext} font-bold uppercase mb-1`}>Classificação</p>
-                                <p className={`text-xl font-bold ${themeMode === 'light' ? 'text-black' : 'text-zinc-300'}`}>{displayApp.rating}</p>
-                                <p className={`text-[9px] ${colors.subtext}`}>Anos</p>
-                            </div>
-                            <div className={`px-4 text-center border-r ${colors.border} last:border-0 flex-1`}>
-                                <p className={`text-[10px] ${colors.subtext} font-bold uppercase mb-1`}>Categoria</p>
-                                <Icon name="Grid" size={20} className={`mx-auto ${colors.subtext} mb-0.5`} />
-                                <p className={`text-[9px] ${colors.subtext}`}>{displayApp.category}</p>
-                            </div>
-                            <div className="px-4 text-center flex-1">
-                                <p className={`text-[10px] ${colors.subtext} font-bold uppercase mb-1`}>Plataforma</p>
-                                <p className={`text-sm font-bold ${colors.subtext} mt-1`}>{displayApp.platform || 'Mobile'}</p>
-                            </div>
-                        </div>
-
-                        <div className="mb-8">
-                            <h2 className="text-lg font-bold mb-3">Novidades</h2>
-                            <div className={`flex justify-between ${colors.subtext} text-xs font-medium mb-3`}><span>Versão {displayApp.version}</span><span>{formatShortDate(now)}</span></div>
-                            <p className={`${colors.subtext} text-sm leading-relaxed opacity-90`}>{displayApp.updateNews || 'Melhorias de desempenho e correções de bugs.'}</p>
-                        </div>
-
-                        <div className="mb-8">
-                            <h2 className="text-lg font-bold mb-4">Pré-visualização</h2>
-                            <div className="flex gap-4 overflow-x-auto no-scrollbar snap-x -mx-5 px-5">
-                                {displayApp.screenshots?.map((s, i) => <img key={i} src={s} className={`h-[400px] w-auto rounded-[32px] snap-center shadow-lg ${colors.input} object-cover`} />)}
-                            </div>
-                        </div>
-
-                        <div className={`border-t ${colors.border} pt-6`}>
-                            <p className={`${colors.subtext} text-sm leading-relaxed whitespace-pre-wrap opacity-90`}>{displayApp.description}</p>
-                        </div>
-                        
-                        <div className={`mt-10 pt-10 border-t ${colors.border} mb-10`}>
-                            <div className="flex justify-between py-2 text-xs">
-                                <span className={colors.subtext}>Desenvolvedor</span>
-                                <span className={colors.text}>{displayApp.developer}</span>
-                            </div>
-                            <div className="flex justify-between py-2 text-xs">
-                                <span className={colors.subtext}>Categoria</span>
-                                <span className={colors.text}>{displayApp.category}</span>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             );
         }
