@@ -1,45 +1,32 @@
-name: Build Release APK
+name: Build Release
 on: [push]
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      
       - uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
           java-version: '17'
-          
       - uses: actions/setup-node@v3
         with:
           node-version: '18'
-          
       - run: npm install -g cordova
-      
-      - name: Create Project
-        run: |
+      - run: |
           cordova create app com.nexus.store "Nexus Store"
           cp config.xml app/
           rm app/www/index.html
           cp index.html app/www/
-          # Copia as chaves para a raiz do projeto Cordova
           cp build.json app/
           cp nexus.keystore app/
-
       - working-directory: ./app
         run: cordova platform add android
-        
-      - name: Build APK
-        working-directory: ./app
+      - working-directory: ./app
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          # Força gerar APK (e não AAB) e usa sua configuração de chave
           cordova build android --release --buildConfig=build.json -- --packageType=apk
-          
-      - name: Upload ANY APK Found
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: nexus-store-apk
-          # Os asteriscos duplos (**) significam: procure em qualquer subpasta
-          path: **/*.apk
+          path: "**/*.apk"
